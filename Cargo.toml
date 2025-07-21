@@ -144,6 +144,8 @@ profile-with-tracy-ondemand = ["profile-with-tracy", "tracy-client/ondemand", "t
 profile-with-tracy-allocations = ["profile-with-tracy"]
 # Enables dinit integration (global environment).
 dinit = []
+# Enables experimental support for session management.
+xx-session-management = []
 
 [lints.clippy]
 new_without_default = "allow"
