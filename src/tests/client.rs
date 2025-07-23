@@ -32,7 +32,14 @@ use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle};
+use xx_session_manager_v1::{Reason, XxSessionManagerV1};
+use xx_session_v1::XxSessionV1;
+use xx_toplevel_session_v1::XxToplevelSessionV1;
 
+use crate::tests::raw::xx_session_management::v1::client::xx_session_v1::Event;
+use crate::tests::raw::xx_session_management::v1::client::{
+    xx_session_manager_v1, xx_session_v1, xx_toplevel_session_v1,
+};
 use crate::utils::id::IdCounter;
 
 pub struct Client {
@@ -55,9 +62,11 @@ pub struct State {
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
     pub viewporter: Option<WpViewporter>,
+    pub xx_session_manager: Option<XxSessionManagerV1>,
 
     pub windows: Vec<Window>,
     pub layers: Vec<LayerSurface>,
+    pub sessions: Vec<String>,
 }
 
 pub struct Window {
@@ -181,8 +190,10 @@ impl Client {
             layer_shell: None,
             spbm: None,
             viewporter: None,
+            xx_session_manager: None,
             windows: Vec::new(),
             layers: Vec::new(),
+            sessions: Vec::new(),
         };
 
         Self {
@@ -241,6 +252,30 @@ impl Client {
             .unwrap()
             .0
             .clone()
+    }
+
+    pub fn get_session(&self, reason: Reason, session_id: Option<String>) -> XxSessionV1 {
+        self.state.get_session(reason, session_id)
+    }
+
+    pub fn session_add_toplevel(
+        &self,
+        session: &XxSessionV1,
+        toplevel: &XdgToplevel,
+        toplevel_id: String,
+    ) -> XxToplevelSessionV1 {
+        self.state
+            .session_add_toplevel(session, toplevel, toplevel_id)
+    }
+
+    pub fn session_restore_toplevel(
+        &self,
+        session: &XxSessionV1,
+        toplevel: &XdgToplevel,
+        toplevel_id: String,
+    ) -> XxToplevelSessionV1 {
+        self.state
+            .session_restore_toplevel(session, toplevel, toplevel_id)
     }
 }
 
@@ -319,6 +354,29 @@ impl State {
             .find(|w| w.surface == *surface)
             .unwrap()
     }
+
+    pub fn get_session(&self, reason: Reason, session_id: Option<String>) -> XxSessionV1 {
+        let session_manager = self.xx_session_manager.as_ref().unwrap();
+        session_manager.get_session(reason, session_id, &self.qh, ())
+    }
+
+    pub fn session_add_toplevel(
+        &self,
+        session: &XxSessionV1,
+        toplevel: &XdgToplevel,
+        toplevel_id: String,
+    ) -> XxToplevelSessionV1 {
+        session.add_toplevel(toplevel, toplevel_id, &self.qh, ())
+    }
+
+    pub fn session_restore_toplevel(
+        &self,
+        session: &XxSessionV1,
+        toplevel: &XdgToplevel,
+        toplevel_id: String,
+    ) -> XxToplevelSessionV1 {
+        session.restore_toplevel(toplevel, toplevel_id, &self.qh, ())
+    }
 }
 
 impl Window {
@@ -342,6 +400,10 @@ impl Window {
     }
 
     pub fn attach_null(&self) {
+        self.surface.attach(None, 0, 0);
+    }
+
+    pub fn remove_buffer(&self) {
         self.surface.attach(None, 0, 0);
     }
 
@@ -518,6 +580,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 } else if interface == WpViewporter::interface().name {
                     let version = min(version, WpViewporter::interface().version);
                     state.viewporter = Some(registry.bind(name, version, qh, ()));
+                } else if interface == XxSessionManagerV1::interface().name {
+                    let version = min(version, XxSessionManagerV1::interface().version);
+                    state.xx_session_manager = Some(registry.bind(name, version, qh, ()));
                 } else if interface == WlOutput::interface().name {
                     let version = min(version, WlOutput::interface().version);
                     let output = registry.bind(name, version, qh, ());
@@ -755,6 +820,51 @@ impl Dispatch<WpViewporter, ()> for State {
         _state: &mut Self,
         _proxy: &WpViewporter,
         _event: <WpViewporter as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<XxSessionManagerV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &XxSessionManagerV1,
+        _event: <XxSessionManagerV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<XxSessionV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &XxSessionV1,
+        event: <XxSessionV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        match event {
+            Event::Created { id } => {
+                state.sessions.push(id);
+            }
+            Event::Restored => {}
+            Event::Replaced => {}
+        }
+    }
+}
+
+impl Dispatch<XxToplevelSessionV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &XxToplevelSessionV1,
+        _event: <XxToplevelSessionV1 as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
