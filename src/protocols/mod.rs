@@ -6,5 +6,7 @@ pub mod output_management;
 pub mod screencopy;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
+#[cfg(feature = "xx-session-management")]
+pub mod xx_session_management;
 
 pub mod raw;

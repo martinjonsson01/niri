@@ -2,6 +2,7 @@ mod compositor;
 mod layer_shell;
 mod xdg_shell;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::OwnedFd;
@@ -56,6 +57,7 @@ use smithay::wayland::selection::{SelectionHandler, SelectionTarget};
 use smithay::wayland::session_lock::{
     LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker,
 };
+use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::tablet_manager::TabletSeatHandler;
 use smithay::wayland::xdg_activation::{
     XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
@@ -71,6 +73,8 @@ use smithay::{
     delegate_viewporter, delegate_xdg_activation,
 };
 
+#[cfg(feature = "xx-session-management")]
+use crate::delegate_session_management;
 pub use crate::handlers::xdg_shell::KdeDecorationsModeState;
 use crate::layout::workspace::WorkspaceId;
 use crate::layout::ActivateWindow;
@@ -88,7 +92,10 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
+#[cfg(feature = "xx-session-management")]
+use crate::protocols::xx_session_management::{SessionManagementHandler, SessionManagerState};
 use crate::utils::{output_size, send_scale_transform};
+use crate::window::Unmapped;
 use crate::{
     delegate_ext_workspace, delegate_foreign_toplevel, delegate_gamma_control,
     delegate_mutter_x11_interop, delegate_output_management, delegate_screencopy,
@@ -641,6 +648,24 @@ impl ScreencopyHandler for State {
     }
 }
 delegate_screencopy!(State);
+
+#[cfg(feature = "xx-session-management")]
+impl SessionManagementHandler for State {
+    fn session_management_state(&mut self) -> &mut SessionManagerState {
+        &mut self.niri.session_management_state
+    }
+
+    fn xdg_shell_state(&self) -> &XdgShellState {
+        &self.niri.xdg_shell_state
+    }
+
+    fn unmapped_windows(&self) -> &HashMap<WlSurface, Unmapped> {
+        &self.niri.unmapped_windows
+    }
+}
+
+#[cfg(feature = "xx-session-management")]
+delegate_session_management!(State);
 
 impl VirtualPointerHandler for State {
     fn virtual_pointer_manager_state(&mut self) -> &mut VirtualPointerManagerState {
