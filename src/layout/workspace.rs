@@ -19,7 +19,7 @@ use smithay::wayland::shell::xdg::SurfaceCachedState;
 
 use super::floating::{FloatingSpace, FloatingSpaceRenderElement};
 use super::scrolling::{
-    Column, ColumnWidth, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement,
+    Column, ColumnWidth, ScrollDirection, ScrollingSpace, ScrollingSpaceRenderElement, WindowHeight,
 };
 use super::shadow::Shadow;
 use super::tile::{Tile, TileRenderSnapshot};
@@ -1964,6 +1964,22 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn layout_config(&self) -> Option<&niri_config::LayoutPart> {
         self.layout_config.as_ref()
+    }
+
+    pub fn get_column_index_of(&self, window: &W::Id) -> Option<usize> {
+        self.scrolling.find_column_index_of(window)
+    }
+
+    pub fn is_window_column_full_width(&self, window: &W::Id) -> Option<bool> {
+        self.scrolling.is_window_column_full_width(window)
+    }
+
+    pub fn get_window_column_width(&self, window: &W::Id) -> Option<ColumnWidth> {
+        self.scrolling.get_window_column_width(window)
+    }
+
+    pub fn get_window_height(&self, window: &W::Id) -> Option<WindowHeight> {
+        self.scrolling.get_window_height(window)
     }
 
     #[cfg(test)]

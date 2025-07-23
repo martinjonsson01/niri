@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::iter::repeat_with;
-use std::sync::Arc;
 
 use niri_config::{FloatOrInt, FloatingPosition, PresetSize, RelativeTo};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -8,6 +7,7 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 use smithay::utils::{Coordinate, Logical, Rectangle};
+use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shell::xdg::XdgShellState;
 use wayland_backend::server::ClientId;
 use xx_session_manager_v1::XxSessionManagerV1;
@@ -17,13 +17,22 @@ use xx_toplevel_session_v1::XxToplevelSessionV1;
 use super::raw::xx_session_management::v1::server::{
     xx_session_manager_v1, xx_session_v1, xx_toplevel_session_v1,
 };
+use crate::layout::scrolling::{ColumnWidth, WindowHeight};
 use crate::layout::workspace::WorkspaceId;
-use crate::window::Unmapped;
+use crate::layout::Layout;
+use crate::window::{Mapped, Unmapped};
 
 const VERSION: u32 = 1;
 
 /// Used to globally identify a session.
 pub type SessionId = String;
+
+/// A reference to a specific toplevel session.
+#[derive(Debug, Clone)]
+pub struct ToplevelSessionRef {
+    session_id: SessionId,
+    toplevel_id: ToplevelId,
+}
 
 /// Session data for all applications.
 ///
@@ -31,6 +40,18 @@ pub type SessionId = String;
 pub struct SessionManagerState {
     /// Maps session IDs to `xx_session_v1` data.
     sessions: HashMap<SessionId, SessionState>,
+}
+
+impl SessionManagerState {
+    /// Gets a mutable reference to a toplevel's session state, if it exists.
+    pub fn get_toplevel_session_mut(
+        &mut self,
+        session_ref: &ToplevelSessionRef,
+    ) -> Option<&mut ToplevelSessionState> {
+        self.sessions
+            .get_mut(&session_ref.session_id)
+            .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
+    }
 }
 
 pub struct SessionManagerGlobalData {
@@ -102,6 +123,7 @@ where
         _display: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        debug!("xx_session_manager_v1 got request: {:?}", request);
         match request {
             xx_session_manager_v1::Request::Destroy => return,
             xx_session_manager_v1::Request::GetSession {
@@ -153,6 +175,9 @@ pub trait SessionManagementHandler {
     fn session_management_state(&mut self) -> &mut SessionManagerState;
     /// Get a reference to the [`XdgShellState`].
     fn xdg_shell_state(&self) -> &XdgShellState;
+    /// Finds a window mapped to the given surface, if it exists.
+    fn find_mapped_window(&mut self, surface: &WlSurface) -> Option<&Mapped>;
+    /// Gets the currently unmapped windows.
     fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped>;
 }
 
@@ -190,7 +215,7 @@ pub struct SessionState {
     session_id: SessionId,
     owned_by_client: Option<ClientId>,
     /// Maps toplevel IDs ("names") to `xx_toplevel_session_v1` data.
-    sessions: Arc<HashMap<ToplevelId, ToplevelSessionState>>,
+    sessions: HashMap<ToplevelId, ToplevelSessionState>,
 }
 
 impl SessionState {
@@ -208,18 +233,81 @@ impl SessionState {
 /// Corresponds to `xx_toplevel_session_v1`.
 #[derive(Debug, Clone)]
 pub struct ToplevelSessionState {
-    toplevel_id: ToplevelId,
+    session_ref: ToplevelSessionRef,
     workspace: Option<ToplevelSessionWorkspace>,
     window: Option<ToplevelSessionWindow>,
 }
 
 impl ToplevelSessionState {
-    fn new(toplevel_id: ToplevelId) -> Self {
+    fn new(session_id: SessionId, toplevel_id: ToplevelId) -> Self {
         Self {
-            toplevel_id,
+            session_ref: ToplevelSessionRef {
+                session_id,
+                toplevel_id,
+            },
             workspace: None,
             window: None,
         }
+    }
+
+    pub fn get_ref(&self) -> ToplevelSessionRef {
+        self.session_ref.clone()
+    }
+
+    pub fn update(&mut self, mapped: &Mapped, layout: &Layout<Mapped>) {
+        let surface = mapped.window.wl_surface().expect("no x11 support");
+
+        let Some(workspace) = layout.find_window_workspace(&surface) else {
+            error!("unable to update toplevel session state: couldn't find window workspace");
+            return;
+        };
+
+        self.workspace = Some(
+            workspace
+                .name()
+                .cloned()
+                .map(ToplevelSessionWorkspace::Named)
+                .unwrap_or(ToplevelSessionWorkspace::Unnamed(workspace.id())),
+        );
+
+        self.window = Some(if mapped.is_floating() {
+            ToplevelSessionWindow::Floating {
+                geometry: mapped.window.geometry(),
+            }
+        } else {
+            let Some(column_index) = workspace.get_column_index_of(&mapped.window) else {
+                error!("unable to get column index of non-floating window");
+                return;
+            };
+
+            let Some(height) = workspace.get_window_height(&mapped.window) else {
+                error!("unable to get column height of non-floating window");
+                return;
+            };
+
+            let Some(width) = workspace.get_window_column_width(&mapped.window) else {
+                error!("unable to get column width of non-floating window");
+                return;
+            };
+
+            let Some(is_full_width) = workspace.is_window_column_full_width(&mapped.window) else {
+                error!("unable to find column width of non-floating window");
+                return;
+            };
+
+            ToplevelSessionWindow::Scrolling {
+                column_index,
+                height,
+                width,
+                is_full_width,
+            }
+        });
+
+        debug!(
+            "updated top level session state for Mapped {:?} to {:?}",
+            mapped.id(),
+            &self
+        );
     }
 
     pub fn initial_workspace(&self) -> Option<&ToplevelSessionWorkspace> {
@@ -247,20 +335,20 @@ impl ToplevelSessionState {
     }
 
     pub fn initial_width(&self) -> Option<PresetSize> {
-        self.window.as_ref().and_then(|window| match window {
-            ToplevelSessionWindow::Scrolling { width, .. } => Some(width.clone()),
-            ToplevelSessionWindow::Floating { geometry, .. } => {
-                Some(PresetSize::Fixed(geometry.size.w))
-            }
+        self.window.as_ref().map(|window| match window {
+            ToplevelSessionWindow::Scrolling { width, .. } => (*width).into(),
+            ToplevelSessionWindow::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.w),
         })
     }
 
     pub fn initial_height(&self) -> Option<PresetSize> {
-        self.window.as_ref().and_then(|window| match window {
-            ToplevelSessionWindow::Scrolling { height, .. } => Some(height.clone()),
-            ToplevelSessionWindow::Floating { geometry, .. } => {
-                Some(PresetSize::Fixed(geometry.size.h))
-            }
+        self.window.as_ref().map(|window| match window {
+            ToplevelSessionWindow::Scrolling {
+                height: WindowHeight::Fixed(height),
+                ..
+            } => PresetSize::Fixed(*height as i32),
+            ToplevelSessionWindow::Scrolling { height: _, .. } => PresetSize::Proportion(1.0),
+            ToplevelSessionWindow::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.h),
         })
     }
 
@@ -292,10 +380,10 @@ pub enum ToplevelSessionWindow {
         column_index: usize,
 
         /// How wide the window should be.
-        width: PresetSize,
+        width: ColumnWidth,
 
         /// How tall the window should be.
-        height: PresetSize,
+        height: WindowHeight,
 
         /// Whether the column is full-width.
         is_full_width: bool,
@@ -324,6 +412,7 @@ where
         _display: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        debug!("xx_session_v1 got request: {:?}", request);
         match request {
             xx_session_v1::Request::Destroy => {
                 let sessions = &mut state.session_management_state().sessions;
@@ -351,24 +440,46 @@ where
                     return;
                 }
 
-                if !state.unmapped_windows().contains_key(surface.wl_surface()) {
+                if let Some(mapped) = state.find_mapped_window(surface.wl_surface()) {
                     session.post_error(
                         xx_session_v1::Error::AlreadyMapped,
-                        "toplevel was already mapped when restored",
+                        format!(
+                            "toplevel {:?} was already mapped when restored",
+                            mapped
+                                .window
+                                .toplevel()
+                                .expect("no x11 support")
+                                .xdg_toplevel()
+                                .id()
+                        ),
                     );
                     return;
                 }
 
-                let toplevel_session_state = ToplevelSessionState::new(toplevel_id.clone());
+                let toplevel_session_state =
+                    ToplevelSessionState::new(data.session_id.clone(), toplevel_id.clone());
                 data_init.init(id, toplevel_session_state.clone());
 
-                let mut sessions = Arc::clone(&data.sessions);
-                let Some(sessions) = Arc::get_mut(&mut sessions) else {
-                    error!("Failed to acquire mutable reference to toplevel sessions");
+                let Some(session_state) = state
+                    .session_management_state()
+                    .sessions
+                    .get_mut(&data.session_id)
+                else {
+                    error!("Unable to find session with id `{}`", data.session_id);
                     return;
                 };
 
-                sessions.insert(toplevel_id, toplevel_session_state.clone());
+                session_state
+                    .sessions
+                    .insert(toplevel_id, toplevel_session_state.clone());
+
+                let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
+                    error!("Unable to find unmapped window");
+                    return;
+                };
+                unmapped.session = Some(toplevel_session_state);
+
+                debug!("added toplevel with session state: {:?}", unmapped.session);
             }
             xx_session_v1::Request::RestoreToplevel {
                 id,
@@ -388,27 +499,52 @@ where
                     return;
                 }
 
-                let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
+                if let Some(mapped) = state.find_mapped_window(surface.wl_surface()) {
                     session.post_error(
                         xx_session_v1::Error::AlreadyMapped,
-                        "toplevel was already mapped when restored",
+                        format!(
+                            "toplevel {:?} was already mapped when restored",
+                            mapped
+                                .window
+                                .toplevel()
+                                .expect("no x11 support")
+                                .xdg_toplevel()
+                                .id()
+                        ),
                     );
                     return;
-                };
+                }
 
-                let toplevel_session_state = ToplevelSessionState::new(toplevel_id.clone());
+                let toplevel_session_state =
+                    ToplevelSessionState::new(data.session_id.clone(), toplevel_id.clone());
 
                 data_init.init(id, toplevel_session_state.clone());
 
-                let mut sessions = Arc::clone(&data.sessions);
-                let Some(sessions) = Arc::get_mut(&mut sessions) else {
-                    error!("Failed to acquire mutable reference to toplevel sessions");
+                let Some(session_state) = state
+                    .session_management_state()
+                    .sessions
+                    .get_mut(&data.session_id)
+                else {
+                    error!("Unable to find session with id `{}`", data.session_id);
                     return;
                 };
 
-                sessions.insert(toplevel_id, toplevel_session_state.clone());
+                let session = session_state
+                    .sessions
+                    .entry(toplevel_id)
+                    .or_insert_with(|| toplevel_session_state.clone())
+                    .clone();
 
-                unmapped.session = Some(toplevel_session_state);
+                let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
+                    error!("Unable to find unmapped window");
+                    return;
+                };
+                unmapped.session = Some(session);
+
+                debug!(
+                    "restoring toplevel with session state: {:?}",
+                    unmapped.session
+                );
             }
         }
     }
@@ -429,6 +565,7 @@ where
         _display: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        debug!("xx_toplevel_session_v1 got request: {:?}", request);
         match request {
             xx_toplevel_session_v1::Request::Destroy => {
                 unimplemented!("xx_toplevel_session_v1::destroy")

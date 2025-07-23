@@ -1383,6 +1383,29 @@ impl<W: LayoutElement> Layout<W> {
         None
     }
 
+    pub fn find_window_workspace(&self, wl_surface: &WlSurface) -> Option<&Workspace<W>> {
+        match &self.monitor_set {
+            MonitorSet::Normal { monitors, .. } => {
+                for mon in monitors {
+                    for ws in &mon.workspaces {
+                        if ws.find_wl_surface(wl_surface).is_some() {
+                            return Some(ws);
+                        }
+                    }
+                }
+            }
+            MonitorSet::NoOutputs { workspaces } => {
+                for ws in workspaces {
+                    if ws.find_wl_surface(wl_surface).is_some() {
+                        return Some(ws);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Computes the window-geometry-relative target rect for popup unconstraining.
     ///
     /// We will try to fit popups inside this rect.

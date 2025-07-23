@@ -95,7 +95,7 @@ use crate::protocols::virtual_pointer::{
 #[cfg(feature = "xx-session-management")]
 use crate::protocols::xx_session_management::{SessionManagementHandler, SessionManagerState};
 use crate::utils::{output_size, send_scale_transform};
-use crate::window::Unmapped;
+use crate::window::{Mapped, Unmapped};
 use crate::{
     delegate_ext_workspace, delegate_foreign_toplevel, delegate_gamma_control,
     delegate_mutter_x11_interop, delegate_output_management, delegate_screencopy,
@@ -661,6 +661,13 @@ impl SessionManagementHandler for State {
 
     fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped> {
         &mut self.niri.unmapped_windows
+    }
+
+    fn find_mapped_window(&mut self, surface: &WlSurface) -> Option<&Mapped> {
+        self.niri
+            .layout
+            .find_window_and_output(surface)
+            .map(|(mapped, _)| mapped)
     }
 }
 

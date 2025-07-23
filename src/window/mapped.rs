@@ -28,6 +28,7 @@ use crate::layout::{
     LayoutElementRenderSnapshot, SizingMode,
 };
 use crate::niri_render_elements;
+use crate::protocols::xx_session_management::{ToplevelSessionRef, ToplevelSessionState};
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::offscreen::OffscreenData;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -51,6 +52,9 @@ pub struct Mapped {
 
     /// Unique ID of this `Mapped`.
     id: MappedId,
+
+    /// A reference to the session associated with this window.
+    session_ref: Option<ToplevelSessionRef>,
 
     /// Credentials of the process that created the Wayland connection.
     credentials: Option<Credentials>,
@@ -249,13 +253,25 @@ enum RequestSizeOnce {
 }
 
 impl Mapped {
-    pub fn new(window: Window, rules: ResolvedWindowRules, hook: HookId) -> Self {
+    pub fn new(
+        window: Window,
+        rules: ResolvedWindowRules,
+        hook: HookId,
+        session: Option<&ToplevelSessionState>,
+    ) -> Self {
+        debug!(
+            "mapped toplevel {:?} with session {:?}",
+            window.toplevel().unwrap().xdg_toplevel().id(),
+            session.map(ToplevelSessionState::get_ref)
+        );
+
         let surface = window.wl_surface().expect("no X11 support");
         let credentials = get_credentials_for_surface(&surface);
 
         let mut rv = Self {
             window,
             id: MappedId::next(),
+            session_ref: session.map(ToplevelSessionState::get_ref),
             credentials,
             pre_commit_hook: hook,
             rules,
@@ -295,6 +311,10 @@ impl Mapped {
 
     pub fn toplevel(&self) -> &ToplevelSurface {
         self.window.toplevel().expect("no X11 support")
+    }
+
+    pub fn session_ref(&self) -> Option<&ToplevelSessionRef> {
+        self.session_ref.as_ref()
     }
 
     /// Recomputes the resolved window rules and returns whether they changed.

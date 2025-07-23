@@ -239,6 +239,15 @@ pub enum ColumnWidth {
     Fixed(f64),
 }
 
+impl From<ColumnWidth> for PresetSize {
+    fn from(value: ColumnWidth) -> Self {
+        match value {
+            ColumnWidth::Proportion(width) => PresetSize::Proportion(width),
+            ColumnWidth::Fixed(width) => PresetSize::Fixed(width as i32),
+        }
+    }
+}
+
 /// Height of a window in a column.
 ///
 /// Every window but one in a column must be `Auto`-sized so that the total height can add up to
@@ -410,6 +419,46 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn tiles(&self) -> impl Iterator<Item = &Tile<W>> + '_ {
         self.columns.iter().flat_map(|col| col.tiles.iter())
+    }
+
+    pub fn find_column_index_of(&self, window: &W::Id) -> Option<usize> {
+        self.columns
+            .iter()
+            .enumerate()
+            .find(|(_, column)| column.tiles.iter().any(|tile| tile.window().id() == window))
+            .map(|(index, _)| index)
+    }
+
+    pub fn is_window_column_full_width(&self, window: &W::Id) -> Option<bool> {
+        self.find_column_index_of(window)
+            .and_then(|idx| self.columns.get(idx))
+            .map(|column| column.is_full_width)
+    }
+
+    pub fn get_window_column_width(&self, window: &W::Id) -> Option<ColumnWidth> {
+        self.find_column_index_of(window)
+            .and_then(|idx| self.columns.get(idx))
+            .map(|column| column.width)
+    }
+
+    pub fn get_window_height(&self, window: &W::Id) -> Option<WindowHeight> {
+        self.columns
+            .iter()
+            .flat_map(|column| {
+                column
+                    .tiles
+                    .iter()
+                    .enumerate()
+                    .find(|(_, tile)| tile.window().id() == window)
+                    .map(|(tile_index, _)| (column, tile_index))
+            })
+            .flat_map(|(column, tile_index)| {
+                column
+                    .data
+                    .get(tile_index)
+                    .map(|tile_data| tile_data.height)
+            })
+            .next()
     }
 
     pub fn tiles_mut(&mut self) -> impl Iterator<Item = &mut Tile<W>> + '_ {
