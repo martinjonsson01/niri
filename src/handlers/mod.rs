@@ -659,8 +659,8 @@ impl SessionManagementHandler for State {
         &self.niri.xdg_shell_state
     }
 
-    fn unmapped_windows(&self) -> &HashMap<WlSurface, Unmapped> {
-        &self.niri.unmapped_windows
+    fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped> {
+        &mut self.niri.unmapped_windows
     }
 }
 

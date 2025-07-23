@@ -5,6 +5,7 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 use smithay::wayland::xdg_activation::XdgActivationTokenData;
 
 use super::ResolvedWindowRules;
+use crate::protocols::xx_session_management::ToplevelSessionState;
 
 #[derive(Debug)]
 pub struct Unmapped {
@@ -12,6 +13,8 @@ pub struct Unmapped {
     pub state: InitialConfigureState,
     /// Activation token, if one was used on this unmapped window.
     pub activation_token_data: Option<XdgActivationTokenData>,
+    /// The session data associated with this window.
+    pub session: Option<ToplevelSessionState>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -87,6 +90,7 @@ impl Unmapped {
                 wants_maximized: false,
             },
             activation_token_data: None,
+            session: None,
         }
     }
 

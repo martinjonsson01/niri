@@ -22,6 +22,7 @@ use super::xdg_shell::add_mapped_toplevel_pre_commit_hook;
 use crate::handlers::XDG_ACTIVATION_TOKEN_TIMEOUT;
 use crate::layout::{ActivateWindow, AddWindowTarget, LayoutElement as _};
 use crate::niri::{CastTarget, ClientState, LockState, State};
+use crate::protocols::xx_session_management::ToplevelSessionState;
 use crate::utils::transaction::Transaction;
 use crate::utils::{is_mapped, send_scale_transform};
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped};
@@ -85,7 +86,9 @@ impl CompositorHandler for State {
                         window,
                         state,
                         activation_token_data,
+                        session,
                     } = entry.remove();
+                    let session = session.as_ref();
 
                     window.on_commit();
 
@@ -148,7 +151,9 @@ impl CompositorHandler for State {
                     // The GTK about dialog sets min/max size after the initial configure but
                     // before mapping, so we need to compute open_floating at the last possible
                     // moment, that is here.
-                    let is_floating = rules.compute_open_floating(toplevel);
+                    let is_floating = session
+                        .and_then(ToplevelSessionState::was_floating)
+                        .unwrap_or_else(|| rules.compute_open_floating(toplevel));
 
                     // Figure out if we should activate the window.
                     let activate = rules.open_focused.map(|focus| {
@@ -202,7 +207,10 @@ impl CompositorHandler for State {
                         // Open dialogs next to their parent window.
                         AddWindowTarget::NextTo(p)
                     } else if let Some(id) = workspace_id {
-                        AddWindowTarget::Workspace(id)
+                        AddWindowTarget::Workspace(
+                            id,
+                            session.and_then(ToplevelSessionState::initial_column_index),
+                        )
                     } else if let Some(output) = &output {
                         AddWindowTarget::Output(output)
                     } else {

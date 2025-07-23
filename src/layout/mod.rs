@@ -477,8 +477,8 @@ pub enum AddWindowTarget<'a, W: LayoutElement> {
     Auto,
     /// On this output.
     Output(&'a Output),
-    /// On this workspace.
-    Workspace(WorkspaceId),
+    /// On this workspace in this column index.
+    Workspace(WorkspaceId, Option<usize>),
     /// Next to this existing window.
     NextTo(&'a W::Id),
 }
@@ -911,7 +911,7 @@ impl<W: LayoutElement> Layout<W> {
 
                         (mon_idx, MonitorAddWindowTarget::Auto)
                     }
-                    AddWindowTarget::Workspace(ws_id) => {
+                    AddWindowTarget::Workspace(ws_id, column_idx) => {
                         let mon_idx = monitors
                             .iter()
                             .position(|mon| mon.workspaces.iter().any(|ws| ws.id() == ws_id))
@@ -921,7 +921,7 @@ impl<W: LayoutElement> Layout<W> {
                             mon_idx,
                             MonitorAddWindowTarget::Workspace {
                                 id: ws_id,
-                                column_idx: None,
+                                column_idx,
                             },
                         )
                     }
@@ -1003,9 +1003,12 @@ impl<W: LayoutElement> Layout<W> {
                         (0, WorkspaceAddWindowTarget::Auto)
                     }
                     AddWindowTarget::Output(_) => panic!(),
-                    AddWindowTarget::Workspace(ws_id) => {
+                    AddWindowTarget::Workspace(ws_id, column_idx) => {
                         let ws_idx = workspaces.iter().position(|ws| ws.id() == ws_id).unwrap();
-                        (ws_idx, WorkspaceAddWindowTarget::Auto)
+                        let target = column_idx
+                            .map(WorkspaceAddWindowTarget::NewColumnAt)
+                            .unwrap_or(WorkspaceAddWindowTarget::Auto);
+                        (ws_idx, target)
                     }
                     AddWindowTarget::NextTo(next_to) => {
                         if self
@@ -1739,6 +1742,16 @@ impl<W: LayoutElement> Layout<W> {
                     .is_some_and(|name| name.eq_ignore_ascii_case(workspace_name))
             })
         })
+    }
+
+    pub fn monitor_for_workspace_id(&self, workspace_id: WorkspaceId) -> Option<&Monitor<W>> {
+        let MonitorSet::Normal { monitors, .. } = &self.monitor_set else {
+            return None;
+        };
+
+        monitors
+            .iter()
+            .find(|monitor| monitor.workspaces.iter().any(|ws| ws.id() == workspace_id))
     }
 
     pub fn outputs(&self) -> impl Iterator<Item = &Output> + '_ {

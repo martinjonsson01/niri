@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::iter::repeat_with;
 use std::sync::Arc;
 
+use niri_config::{FloatOrInt, FloatingPosition, PresetSize, RelativeTo};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
-use smithay::utils::{Logical, Rectangle};
+use smithay::utils::{Coordinate, Logical, Rectangle};
 use smithay::wayland::shell::xdg::XdgShellState;
 use wayland_backend::server::ClientId;
 use xx_session_manager_v1::XxSessionManagerV1;
@@ -16,7 +17,6 @@ use xx_toplevel_session_v1::XxToplevelSessionV1;
 use super::raw::xx_session_management::v1::server::{
     xx_session_manager_v1, xx_session_v1, xx_toplevel_session_v1,
 };
-use crate::layout::scrolling::ColumnWidth;
 use crate::layout::workspace::WorkspaceId;
 use crate::window::Unmapped;
 
@@ -153,7 +153,7 @@ pub trait SessionManagementHandler {
     fn session_management_state(&mut self) -> &mut SessionManagerState;
     /// Get a reference to the [`XdgShellState`].
     fn xdg_shell_state(&self) -> &XdgShellState;
-    fn unmapped_windows(&self) -> &HashMap<WlSurface, Unmapped>;
+    fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped>;
 }
 
 #[allow(missing_docs)]
@@ -221,6 +221,59 @@ impl ToplevelSessionState {
             window: None,
         }
     }
+
+    pub fn initial_workspace(&self) -> Option<&ToplevelSessionWorkspace> {
+        self.workspace.as_ref()
+    }
+
+    pub fn initial_column_index(&self) -> Option<usize> {
+        self.window.as_ref().and_then(|window| match window {
+            ToplevelSessionWindow::Scrolling { column_index, .. } => Some(*column_index),
+            _ => None,
+        })
+    }
+
+    pub fn was_full_width(&self) -> Option<bool> {
+        self.window.as_ref().and_then(|window| match window {
+            ToplevelSessionWindow::Scrolling { is_full_width, .. } => Some(*is_full_width),
+            _ => None,
+        })
+    }
+
+    pub fn was_floating(&self) -> Option<bool> {
+        self.window
+            .as_ref()
+            .map(|window| matches!(window, ToplevelSessionWindow::Floating { .. }))
+    }
+
+    pub fn initial_width(&self) -> Option<PresetSize> {
+        self.window.as_ref().and_then(|window| match window {
+            ToplevelSessionWindow::Scrolling { width, .. } => Some(width.clone()),
+            ToplevelSessionWindow::Floating { geometry, .. } => {
+                Some(PresetSize::Fixed(geometry.size.w))
+            }
+        })
+    }
+
+    pub fn initial_height(&self) -> Option<PresetSize> {
+        self.window.as_ref().and_then(|window| match window {
+            ToplevelSessionWindow::Scrolling { height, .. } => Some(height.clone()),
+            ToplevelSessionWindow::Floating { geometry, .. } => {
+                Some(PresetSize::Fixed(geometry.size.h))
+            }
+        })
+    }
+
+    pub fn initial_floating_position(&self) -> Option<FloatingPosition> {
+        self.window.as_ref().and_then(|window| match window {
+            ToplevelSessionWindow::Floating { geometry } => Some(FloatingPosition {
+                x: FloatOrInt(geometry.loc.x.to_f64()),
+                y: FloatOrInt(geometry.loc.y.to_f64()),
+                relative_to: RelativeTo::TopLeft,
+            }),
+            _ => None,
+        })
+    }
 }
 
 /// Identifies a workspace by name (if it has one) or an ID.
@@ -239,7 +292,10 @@ pub enum ToplevelSessionWindow {
         column_index: usize,
 
         /// How wide the window should be.
-        width: ColumnWidth,
+        width: PresetSize,
+
+        /// How tall the window should be.
+        height: PresetSize,
 
         /// Whether the column is full-width.
         is_full_width: bool,
@@ -332,13 +388,13 @@ where
                     return;
                 }
 
-                if !state.unmapped_windows().contains_key(surface.wl_surface()) {
+                let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
                     session.post_error(
                         xx_session_v1::Error::AlreadyMapped,
                         "toplevel was already mapped when restored",
                     );
                     return;
-                }
+                };
 
                 let toplevel_session_state = ToplevelSessionState::new(toplevel_id.clone());
 
@@ -351,6 +407,8 @@ where
                 };
 
                 sessions.insert(toplevel_id, toplevel_session_state.clone());
+
+                unmapped.session = Some(toplevel_session_state);
             }
         }
     }

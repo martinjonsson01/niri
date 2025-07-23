@@ -1044,7 +1044,7 @@ impl Op {
                 let win = TestWindow::new(params);
                 layout.add_window(
                     win,
-                    AddWindowTarget::Workspace(ws_id),
+                    AddWindowTarget::Workspace(ws_id, None),
                     None,
                     None,
                     false,

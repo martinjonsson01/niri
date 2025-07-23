@@ -43,6 +43,7 @@ use crate::input::touch_resize_grab::TouchResizeGrab;
 use crate::input::{PointerOrTouchStartData, DOUBLE_CLICK_TIME};
 use crate::layout::ActivateWindow;
 use crate::niri::{CastTarget, PopupGrabState, State};
+use crate::protocols::xx_session_management::{ToplevelSessionState, ToplevelSessionWorkspace};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     get_monotonic_time, output_matches_name, send_scale_transform, update_tiled_state, ResizeEdge,
@@ -1027,13 +1028,19 @@ impl State {
         };
 
         let config = self.niri.config.borrow();
-        let rules = ResolvedWindowRules::compute(
+        let mut rules = ResolvedWindowRules::compute(
             &config.window_rules,
             WindowRef::Unmapped(unmapped),
             self.niri.is_at_startup,
         );
 
-        let Unmapped { window, state, .. } = unmapped;
+        let Unmapped {
+            window,
+            state,
+            session,
+            ..
+        } = unmapped;
+        let session = session.as_ref();
 
         let InitialConfigureState::NotConfigured {
             wants_fullscreen,
@@ -1044,11 +1051,30 @@ impl State {
             return;
         };
 
-        // Pick the target monitor. First, check if we had a workspace set in the window rules.
-        let mon = rules
-            .open_on_workspace
-            .as_deref()
-            .and_then(|name| self.niri.layout.monitor_for_workspace(name));
+        // Prefer session-stored floating position, if present.
+        rules.default_floating_position = session
+            .and_then(ToplevelSessionState::initial_floating_position)
+            .or(rules.default_floating_position);
+
+        // Pick the target monitor. First, check if the session has saved it.
+        let mon = session
+            .and_then(ToplevelSessionState::initial_workspace)
+            .and_then(|session_workspace| match session_workspace {
+                ToplevelSessionWorkspace::Named(name) => {
+                    self.niri.layout.monitor_for_workspace(name)
+                }
+                ToplevelSessionWorkspace::Unnamed(id) => {
+                    self.niri.layout.monitor_for_workspace_id(*id)
+                }
+            });
+
+        // If not, check if we had a workspace set in the window rules.
+        let mon = mon.or_else(|| {
+            rules
+                .open_on_workspace
+                .as_deref()
+                .and_then(|name| self.niri.layout.monitor_for_workspace(name))
+        });
 
         // If not, check if we had an output set in the window rules.
         let mon = mon.or_else(|| {
@@ -1102,8 +1128,13 @@ impl State {
         let mut floating_width = None;
         let mut height = None;
         let mut floating_height = None;
-        let is_full_width = rules.open_maximized.unwrap_or(false);
-        let is_floating = rules.compute_open_floating(toplevel);
+        let is_full_width = session
+            .and_then(ToplevelSessionState::was_full_width)
+            .or(rules.open_maximized)
+            .unwrap_or(false);
+        let is_floating = session
+            .and_then(ToplevelSessionState::was_floating)
+            .unwrap_or_else(|| rules.compute_open_floating(toplevel));
 
         // Tell the surface the preferred size and bounds for its likely output.
         let ws = rules
@@ -1133,10 +1164,16 @@ impl State {
                 });
             }
 
-            width = ws.resolve_default_width(rules.default_width, false);
-            floating_width = ws.resolve_default_width(rules.default_width, true);
-            height = ws.resolve_default_height(rules.default_height, false);
-            floating_height = ws.resolve_default_height(rules.default_height, true);
+            let session_width = session.and_then(ToplevelSessionState::initial_width);
+            let session_height = session.and_then(ToplevelSessionState::initial_height);
+
+            width = session_width.or_else(|| ws.resolve_default_width(rules.default_width, false));
+            floating_width =
+                session_width.or_else(|| ws.resolve_default_width(rules.default_width, true));
+            height =
+                session_height.or_else(|| ws.resolve_default_height(rules.default_height, false));
+            floating_height =
+                session_height.or_else(|| ws.resolve_default_height(rules.default_height, true));
 
             let configure_width = if is_floating {
                 floating_width
