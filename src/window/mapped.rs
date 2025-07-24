@@ -28,7 +28,7 @@ use crate::layout::{
     LayoutElementRenderSnapshot, SizingMode,
 };
 use crate::niri_render_elements;
-use crate::protocols::xx_session_management::{ToplevelSessionRef, ToplevelSessionState};
+use crate::protocols::xx_session_management::{ToplevelSession, ToplevelSessionRef};
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::offscreen::OffscreenData;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -257,12 +257,12 @@ impl Mapped {
         window: Window,
         rules: ResolvedWindowRules,
         hook: HookId,
-        session: Option<&ToplevelSessionState>,
+        session: Option<&ToplevelSession>,
     ) -> Self {
         debug!(
             "mapped toplevel {:?} with session {:?}",
             window.toplevel().unwrap().xdg_toplevel().id(),
-            session.map(ToplevelSessionState::get_ref)
+            session.map(ToplevelSession::get_ref)
         );
 
         let surface = window.wl_surface().expect("no X11 support");
@@ -271,7 +271,7 @@ impl Mapped {
         let mut rv = Self {
             window,
             id: MappedId::next(),
-            session_ref: session.map(ToplevelSessionState::get_ref),
+            session_ref: session.map(ToplevelSession::get_ref),
             credentials,
             pre_commit_hook: hook,
             rules,

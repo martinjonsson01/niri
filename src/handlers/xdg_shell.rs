@@ -43,7 +43,7 @@ use crate::input::touch_resize_grab::TouchResizeGrab;
 use crate::input::{PointerOrTouchStartData, DOUBLE_CLICK_TIME};
 use crate::layout::ActivateWindow;
 use crate::niri::{CastTarget, PopupGrabState, State};
-use crate::protocols::xx_session_management::{ToplevelSessionState, ToplevelSessionWorkspace};
+use crate::protocols::xx_session_management::{ToplevelSession, ToplevelSessionWorkspace};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     get_monotonic_time, output_matches_name, send_scale_transform, update_tiled_state, ResizeEdge,
@@ -1040,7 +1040,7 @@ impl State {
             session,
             ..
         } = unmapped;
-        let session = session.as_ref();
+        let session = session.as_ref().filter(|session| session.is_restoring());
 
         let InitialConfigureState::NotConfigured {
             wants_fullscreen,
@@ -1053,12 +1053,12 @@ impl State {
 
         // Prefer session-stored floating position, if present.
         rules.default_floating_position = session
-            .and_then(ToplevelSessionState::initial_floating_position)
+            .and_then(ToplevelSession::initial_floating_position)
             .or(rules.default_floating_position);
 
         // Pick the target monitor. First, check if the session has saved it.
         let mon = session
-            .and_then(ToplevelSessionState::initial_workspace)
+            .and_then(ToplevelSession::initial_workspace)
             .and_then(|session_workspace| match session_workspace {
                 ToplevelSessionWorkspace::Named(name) => {
                     self.niri.layout.monitor_for_workspace(name)
@@ -1129,11 +1129,11 @@ impl State {
         let mut height = None;
         let mut floating_height = None;
         let is_full_width = session
-            .and_then(ToplevelSessionState::was_full_width)
+            .and_then(ToplevelSession::was_full_width)
             .or(rules.open_maximized)
             .unwrap_or(false);
         let is_floating = session
-            .and_then(ToplevelSessionState::was_floating)
+            .and_then(ToplevelSession::was_floating)
             .unwrap_or_else(|| rules.compute_open_floating(toplevel));
 
         // Tell the surface the preferred size and bounds for its likely output.
@@ -1164,8 +1164,8 @@ impl State {
                 });
             }
 
-            let session_width = session.and_then(ToplevelSessionState::initial_width);
-            let session_height = session.and_then(ToplevelSessionState::initial_height);
+            let session_width = session.and_then(ToplevelSession::initial_width);
+            let session_height = session.and_then(ToplevelSession::initial_height);
 
             width = session_width.or_else(|| ws.resolve_default_width(rules.default_width, false));
             floating_width =
@@ -1209,6 +1209,8 @@ impl State {
         };
 
         trace!(surface = %toplevel.wl_surface().id(), "sending initial configure");
+        session.map(|session| session.restored(toplevel.xdg_toplevel()));
+
         toplevel.send_configure();
     }
 

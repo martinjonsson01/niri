@@ -22,7 +22,7 @@ use super::xdg_shell::add_mapped_toplevel_pre_commit_hook;
 use crate::handlers::XDG_ACTIVATION_TOKEN_TIMEOUT;
 use crate::layout::{ActivateWindow, AddWindowTarget, LayoutElement as _};
 use crate::niri::{CastTarget, ClientState, LockState, State};
-use crate::protocols::xx_session_management::ToplevelSessionState;
+use crate::protocols::xx_session_management::ToplevelSession;
 use crate::utils::transaction::Transaction;
 use crate::utils::{is_mapped, send_scale_transform};
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped};
@@ -152,7 +152,7 @@ impl CompositorHandler for State {
                     // before mapping, so we need to compute open_floating at the last possible
                     // moment, that is here.
                     let is_floating = session
-                        .and_then(ToplevelSessionState::was_floating)
+                        .and_then(ToplevelSession::was_floating)
                         .unwrap_or_else(|| rules.compute_open_floating(toplevel));
 
                     // Figure out if we should activate the window.
@@ -209,7 +209,7 @@ impl CompositorHandler for State {
                     } else if let Some(id) = workspace_id {
                         AddWindowTarget::Workspace(
                             id,
-                            session.and_then(ToplevelSessionState::initial_column_index),
+                            session.and_then(ToplevelSession::initial_column_index),
                         )
                     } else if let Some(output) = &output {
                         AddWindowTarget::Output(output)
