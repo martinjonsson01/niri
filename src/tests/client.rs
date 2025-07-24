@@ -36,7 +36,6 @@ use xx_session_manager_v1::{Reason, XxSessionManagerV1};
 use xx_session_v1::XxSessionV1;
 use xx_toplevel_session_v1::XxToplevelSessionV1;
 
-use crate::tests::raw::xx_session_management::v1::client::xx_session_v1::Event;
 use crate::tests::raw::xx_session_management::v1::client::{
     xx_session_manager_v1, xx_session_v1, xx_toplevel_session_v1,
 };
@@ -80,6 +79,7 @@ pub struct Window {
     pub pending_configure: Configure,
     pub configures_received: Vec<(u32, Configure)>,
     pub close_requested: bool,
+    pub restored: bool,
 
     pub configures_looked_at: usize,
 }
@@ -231,6 +231,10 @@ impl Client {
         self.state.window(surface)
     }
 
+    pub fn close_window(&mut self, surface: &WlSurface) {
+        self.state.close_window(surface)
+    }
+
     pub fn create_layer(
         &mut self,
         output: Option<&WlOutput>,
@@ -301,6 +305,7 @@ impl State {
             pending_configure: Configure::default(),
             configures_received: Vec::new(),
             close_requested: false,
+            restored: false,
 
             configures_looked_at: 0,
         };
@@ -314,6 +319,16 @@ impl State {
             .iter_mut()
             .find(|w| w.surface == *surface)
             .unwrap()
+    }
+
+    pub fn close_window(&mut self, surface: &WlSurface) {
+        let window = self.window(surface);
+
+        // Unmap window.
+        window.remove_buffer();
+        window.commit();
+
+        self.windows.retain_mut(|w| w.surface != *surface);
     }
 
     pub fn create_layer(
@@ -851,25 +866,36 @@ impl Dispatch<XxSessionV1, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            Event::Created { id } => {
+            xx_session_v1::Event::Created { id } => {
                 state.sessions.push(id);
             }
-            Event::Restored => {}
-            Event::Replaced => {}
+            xx_session_v1::Event::Restored => {}
+            xx_session_v1::Event::Replaced => {}
         }
     }
 }
 
 impl Dispatch<XxToplevelSessionV1, ()> for State {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &XxToplevelSessionV1,
-        _event: <XxToplevelSessionV1 as wayland_client::Proxy>::Event,
+        event: <XxToplevelSessionV1 as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        unreachable!()
+        debug!("receiving xx_toplevel_session_v1 event {:?}", event);
+        match event {
+            xx_toplevel_session_v1::Event::Restored { surface } => {
+                let window = state
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.xdg_toplevel == surface)
+                    .unwrap();
+
+                window.restored = true;
+            }
+        }
     }
 }
 

@@ -75,9 +75,8 @@ fn session_remembers_column_width() {
         "
     );
 
-    // Unmap window (resetting the toplevel state).
-    f.client(id).window(&surface).remove_buffer();
-    f.client(id).window(&surface).commit();
+    // Close window (this should save its state).
+    f.client(id).close_window(&surface);
     f.double_roundtrip(id);
 
     // Restore window.
