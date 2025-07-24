@@ -179,6 +179,8 @@ pub trait SessionManagementHandler {
     fn find_mapped_window(&mut self, surface: &WlSurface) -> Option<&Mapped>;
     /// Gets the currently unmapped windows.
     fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped>;
+    /// Removes a session from any mapped window associated with the surface.
+    fn remove_session_from_mapped(&mut self, surface: &WlSurface);
 }
 
 #[allow(missing_docs)]
@@ -234,19 +236,21 @@ impl SessionState {
 #[derive(Debug, Clone)]
 pub struct ToplevelSessionState {
     session_ref: ToplevelSessionRef,
+    surface: WlSurface,
     workspace: Option<ToplevelSessionWorkspace>,
-    window: Option<ToplevelSessionWindow>,
+    attributes: Option<WindowAttributes>,
 }
 
 impl ToplevelSessionState {
-    fn new(session_id: SessionId, toplevel_id: ToplevelId) -> Self {
+    fn new(surface: WlSurface, session_id: SessionId, toplevel_id: ToplevelId) -> Self {
         Self {
             session_ref: ToplevelSessionRef {
                 session_id,
                 toplevel_id,
             },
+            surface,
             workspace: None,
-            window: None,
+            attributes: None,
         }
     }
 
@@ -270,8 +274,8 @@ impl ToplevelSessionState {
                 .unwrap_or(ToplevelSessionWorkspace::Unnamed(workspace.id())),
         );
 
-        self.window = Some(if mapped.is_floating() {
-            ToplevelSessionWindow::Floating {
+        self.attributes = Some(if mapped.is_floating() {
+            WindowAttributes::Floating {
                 geometry: mapped.window.geometry(),
             }
         } else {
@@ -295,7 +299,7 @@ impl ToplevelSessionState {
                 return;
             };
 
-            ToplevelSessionWindow::Scrolling {
+            WindowAttributes::Scrolling {
                 column_index,
                 height,
                 width,
@@ -315,46 +319,46 @@ impl ToplevelSessionState {
     }
 
     pub fn initial_column_index(&self) -> Option<usize> {
-        self.window.as_ref().and_then(|window| match window {
-            ToplevelSessionWindow::Scrolling { column_index, .. } => Some(*column_index),
+        self.attributes.as_ref().and_then(|window| match window {
+            WindowAttributes::Scrolling { column_index, .. } => Some(*column_index),
             _ => None,
         })
     }
 
     pub fn was_full_width(&self) -> Option<bool> {
-        self.window.as_ref().and_then(|window| match window {
-            ToplevelSessionWindow::Scrolling { is_full_width, .. } => Some(*is_full_width),
+        self.attributes.as_ref().and_then(|window| match window {
+            WindowAttributes::Scrolling { is_full_width, .. } => Some(*is_full_width),
             _ => None,
         })
     }
 
     pub fn was_floating(&self) -> Option<bool> {
-        self.window
+        self.attributes
             .as_ref()
-            .map(|window| matches!(window, ToplevelSessionWindow::Floating { .. }))
+            .map(|window| matches!(window, WindowAttributes::Floating { .. }))
     }
 
     pub fn initial_width(&self) -> Option<PresetSize> {
-        self.window.as_ref().map(|window| match window {
-            ToplevelSessionWindow::Scrolling { width, .. } => (*width).into(),
-            ToplevelSessionWindow::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.w),
+        self.attributes.as_ref().map(|window| match window {
+            WindowAttributes::Scrolling { width, .. } => (*width).into(),
+            WindowAttributes::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.w),
         })
     }
 
     pub fn initial_height(&self) -> Option<PresetSize> {
-        self.window.as_ref().map(|window| match window {
-            ToplevelSessionWindow::Scrolling {
+        self.attributes.as_ref().map(|window| match window {
+            WindowAttributes::Scrolling {
                 height: WindowHeight::Fixed(height),
                 ..
             } => PresetSize::Fixed(*height as i32),
-            ToplevelSessionWindow::Scrolling { height: _, .. } => PresetSize::Proportion(1.0),
-            ToplevelSessionWindow::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.h),
+            WindowAttributes::Scrolling { height: _, .. } => PresetSize::Proportion(1.0),
+            WindowAttributes::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.h),
         })
     }
 
     pub fn initial_floating_position(&self) -> Option<FloatingPosition> {
-        self.window.as_ref().and_then(|window| match window {
-            ToplevelSessionWindow::Floating { geometry } => Some(FloatingPosition {
+        self.attributes.as_ref().and_then(|window| match window {
+            WindowAttributes::Floating { geometry } => Some(FloatingPosition {
                 x: FloatOrInt(geometry.loc.x.to_f64()),
                 y: FloatOrInt(geometry.loc.y.to_f64()),
                 relative_to: RelativeTo::TopLeft,
@@ -373,7 +377,7 @@ pub enum ToplevelSessionWorkspace {
 
 /// Describes where a toplevel window is located.
 #[derive(Debug, Clone)]
-pub enum ToplevelSessionWindow {
+pub enum WindowAttributes {
     /// The window is in a scrollable-tiling space.
     Scrolling {
         /// Where in the scrollable-tiling space the window is located.
@@ -415,12 +419,18 @@ where
         debug!("xx_session_v1 got request: {:?}", request);
         match request {
             xx_session_v1::Request::Destroy => {
-                let sessions = &mut state.session_management_state().sessions;
-                sessions.remove(&data.session_id);
                 debug!("destroyed session `{}`", data.session_id);
             }
             xx_session_v1::Request::Remove => {
-                unimplemented!("xx_session_v1::remove")
+                let sessions = &mut state.session_management_state().sessions;
+                sessions.remove(&data.session_id).map(|session_state| {
+                    session_state
+                        .sessions
+                        .iter()
+                        .map(|(_, toplevel_state)| &toplevel_state.surface)
+                        .for_each(|surface| state.remove_session_from_mapped(surface))
+                });
+                debug!("removed session `{}`", data.session_id);
             }
             xx_session_v1::Request::AddToplevel {
                 id,
@@ -456,8 +466,11 @@ where
                     return;
                 }
 
-                let toplevel_session_state =
-                    ToplevelSessionState::new(data.session_id.clone(), toplevel_id.clone());
+                let toplevel_session_state = ToplevelSessionState::new(
+                    surface.wl_surface().clone(),
+                    data.session_id.clone(),
+                    toplevel_id.clone(),
+                );
                 data_init.init(id, toplevel_session_state.clone());
 
                 let Some(session_state) = state
@@ -515,8 +528,11 @@ where
                     return;
                 }
 
-                let toplevel_session_state =
-                    ToplevelSessionState::new(data.session_id.clone(), toplevel_id.clone());
+                let toplevel_session_state = ToplevelSessionState::new(
+                    surface.wl_surface().clone(),
+                    data.session_id.clone(),
+                    toplevel_id.clone(),
+                );
 
                 data_init.init(id, toplevel_session_state.clone());
 
@@ -557,21 +573,27 @@ where
     D: 'static,
 {
     fn request(
-        _state: &mut D,
+        state: &mut D,
         _client: &Client,
-        toplevel_session: &XxToplevelSessionV1,
+        _toplevel_session: &XxToplevelSessionV1,
         request: xx_toplevel_session_v1::Request,
         data: &ToplevelSessionState,
         _display: &DisplayHandle,
-        data_init: &mut DataInit<'_, D>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
-        debug!("xx_toplevel_session_v1 got request: {:?}", request);
         match request {
             xx_toplevel_session_v1::Request::Destroy => {
-                unimplemented!("xx_toplevel_session_v1::destroy")
+                debug!("destroyed toplevel session `{:?}`", data.session_ref);
             }
             xx_toplevel_session_v1::Request::Remove => {
-                unimplemented!("xx_toplevel_session_v1::remove")
+                state
+                    .session_management_state()
+                    .sessions
+                    .get_mut(&data.session_ref.session_id)
+                    .map(|session_state| {
+                        session_state.sessions.remove(&data.session_ref.toplevel_id)
+                    });
+                debug!("removed toplevel session `{:?}`", data.session_ref);
             }
         }
     }

@@ -317,6 +317,10 @@ impl Mapped {
         self.session_ref.as_ref()
     }
 
+    pub fn remove_session(&mut self) {
+        self.session_ref = None;
+    }
+
     /// Recomputes the resolved window rules and returns whether they changed.
     pub fn recompute_window_rules(&mut self, rules: &[WindowRule], is_at_startup: bool) -> bool {
         self.need_to_recompute_rules = false;

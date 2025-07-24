@@ -666,6 +666,13 @@ impl SessionManagementHandler for State {
     fn find_mapped_window(&mut self, surface: &WlSurface) -> Option<&Mapped> {
         self.niri.layout.find_window(surface)
     }
+
+    fn remove_session_from_mapped(&mut self, surface: &WlSurface) {
+        self.niri
+            .layout
+            .find_window_mut(surface)
+            .map(Mapped::remove_session);
+    }
 }
 
 #[cfg(feature = "xx-session-management")]
