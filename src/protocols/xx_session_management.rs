@@ -134,17 +134,8 @@ where
                     repeat_with(fastrand::alphanumeric).take(32).collect()
                 });
 
-                let sessions = &mut state.session_management_state().sessions;
-
-                let restoring = sessions.contains_key(&session_id);
-
                 let client_id = client.id();
-                let new_session_state = SessionState::new(session_id.clone());
-                let session_state = sessions
-                    .entry(session_id.clone())
-                    .or_insert(new_session_state);
-
-                if session_state.owned_by_client == Some(client_id.clone()) {
+                if state.any_window_in_session(&client_id, &session_id) {
                     let error_message = format!(
                         "session `{}` already in use by client {:?}",
                         session_id, client_id
@@ -153,7 +144,15 @@ where
                     manager.post_error(xx_session_manager_v1::Error::InUse, error_message);
                     return;
                 }
-                session_state.owned_by_client = Some(client_id);
+
+                let sessions = &mut state.session_management_state().sessions;
+
+                let restoring = sessions.contains_key(&session_id);
+
+                let new_session_state = SessionState::new(session_id.clone());
+                let session_state = sessions
+                    .entry(session_id.clone())
+                    .or_insert(new_session_state);
 
                 let session = data_init.init(id, session_state.clone());
 
@@ -181,6 +180,8 @@ pub trait SessionManagementHandler {
     fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped>;
     /// Removes a session from any mapped window associated with the surface.
     fn remove_session_from_mapped(&mut self, surface: ToplevelSessionRef);
+    /// Checks if any of the client's windows are part of a given session.
+    fn any_window_in_session(&self, client_id: &ClientId, session_id: &SessionId) -> bool;
 }
 
 #[allow(missing_docs)]
@@ -215,7 +216,6 @@ pub type ToplevelId = String;
 #[derive(Debug, Clone)]
 pub struct SessionState {
     session_id: SessionId,
-    owned_by_client: Option<ClientId>,
     /// Maps toplevel IDs ("names") to `xx_toplevel_session_v1` data.
     sessions: HashMap<ToplevelId, ToplevelSessionState>,
 }
@@ -224,7 +224,6 @@ impl SessionState {
     fn new(session_id: SessionId) -> Self {
         Self {
             session_id,
-            owned_by_client: None,
             sessions: Default::default(),
         }
     }

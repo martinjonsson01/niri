@@ -38,6 +38,7 @@ use smithay::wayland::keyboard_shortcuts_inhibit::{
 };
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraintsHandler};
+use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::security_context::{
     SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
 };
@@ -72,6 +73,7 @@ use smithay::{
     delegate_single_pixel_buffer, delegate_tablet_manager, delegate_text_input_manager,
     delegate_viewporter, delegate_xdg_activation,
 };
+use wayland_backend::server::ClientId;
 
 #[cfg(feature = "xx-session-management")]
 use crate::delegate_session_management;
@@ -92,7 +94,7 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
-use crate::protocols::xx_session_management::ToplevelSessionRef;
+use crate::protocols::xx_session_management::{SessionId, ToplevelSessionRef};
 #[cfg(feature = "xx-session-management")]
 use crate::protocols::xx_session_management::{SessionManagementHandler, SessionManagerState};
 use crate::utils::{output_size, send_scale_transform};
@@ -673,6 +675,25 @@ impl SessionManagementHandler for State {
             .layout
             .find_window_with_session_mut(session_ref)
             .map(Mapped::remove_session);
+    }
+
+    fn any_window_in_session(&self, client_id: &ClientId, session_id: &SessionId) -> bool {
+        self.niri
+            .layout
+            .windows()
+            .filter(|(_, window)| {
+                window.window.wl_surface().is_some_and(|surface| {
+                    surface
+                        .client()
+                        .map(|client| client.id() == *client_id)
+                        .unwrap_or(false)
+                })
+            })
+            .any(|(_, window)| {
+                window
+                    .session_ref()
+                    .is_some_and(|session_ref| session_ref.session_id == *session_id)
+            })
     }
 }
 
