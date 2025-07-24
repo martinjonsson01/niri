@@ -265,6 +265,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run(None, &mut state, |state| state.refresh_and_flush_clients())
         .unwrap();
 
+    state.niri.session_management_state.save();
+
     Ok(())
 }
 

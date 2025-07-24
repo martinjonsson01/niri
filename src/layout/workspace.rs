@@ -7,6 +7,7 @@ use niri_config::{
     CenterFocusedColumn, CornerRadius, OutputName, PresetSize, Workspace as WorkspaceConfig,
 };
 use niri_ipc::{ColumnDisplay, PositionChange, SizeChange, WindowLayout};
+use serde::{Deserialize, Serialize};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{layer_map_for_output, Window};
@@ -124,7 +125,7 @@ impl OutputId {
 
 static WORKSPACE_ID_COUNTER: IdCounter = IdCounter::new();
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkspaceId(u64);
 
 impl WorkspaceId {

@@ -1,13 +1,17 @@
 use std::collections::HashMap;
+use std::fs;
 use std::iter::repeat_with;
+use std::path::PathBuf;
 
+use directories::ProjectDirs;
 use niri_config::{FloatOrInt, FloatingPosition, PresetSize, RelativeTo};
+use serde::{Deserialize, Serialize};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::XdgToplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
-use smithay::utils::{Coordinate, Logical, Rectangle};
+use smithay::utils::Coordinate;
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shell::xdg::XdgShellState;
 use wayland_backend::server::ClientId;
@@ -29,15 +33,16 @@ const VERSION: u32 = 1;
 pub type SessionId = String;
 
 /// A reference to a specific toplevel session.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct ToplevelSessionRef {
-    session_id: SessionId,
-    toplevel_id: ToplevelId,
+    pub session_id: SessionId,
+    pub toplevel_id: ToplevelId,
 }
 
 /// Session data for all applications.
 ///
 /// A global object shared by all clients.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionManagerState {
     /// Maps session IDs to `xx_session_v1` data.
     sessions: HashMap<SessionId, SessionState>,
@@ -63,8 +68,10 @@ impl SessionManagerState {
         };
         display.create_global::<D, XxSessionManagerV1, _>(VERSION, global_data);
 
+        let loaded_sessions = Self::load_sessions().map(|state| state.sessions);
+
         Self {
-            sessions: HashMap::new(),
+            sessions: loaded_sessions.unwrap_or_default(),
         }
     }
 
@@ -76,6 +83,93 @@ impl SessionManagerState {
         self.sessions
             .get_mut(&session_ref.session_id)
             .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
+    }
+
+    /// Saves session data to persistent storage.
+    pub fn save(&self) {
+        let json = match serde_json::to_string(&self) {
+            Ok(json) => json,
+            Err(error) => {
+                error!("failed to serialize sessions data: {}", error);
+                return;
+            }
+        };
+        let sessions_path = Self::resolve_session_data_path();
+        match fs::write(sessions_path.clone(), json) {
+            Ok(_) => {
+                info!("saved sessions data to {:?}", sessions_path);
+            }
+            Err(error) => {
+                error!("failed to save sessions data: {}", error);
+            }
+        }
+    }
+
+    /// Loads saved sessions from persistent storage.
+    pub fn load_sessions() -> Option<Self> {
+        let sessions_path = Self::resolve_session_data_path();
+        let sessions_json = match fs::read_to_string(sessions_path.clone()) {
+            Ok(json) => json,
+            Err(error) => {
+                error!("failed to read sessions data file: {}", error);
+                return None;
+            }
+        };
+        match serde_json::from_str::<SessionManagerState>(&sessions_json) {
+            Ok(state) => {
+                info!("loaded sessions data from `{:?}`", sessions_path);
+                error!("state `{:?}`", state);
+                Some(state)
+            }
+            Err(error) => {
+                warn!("failed to deserialize sessions data: {}", error);
+                warn!("removing sessions data and starting over from scratch...");
+                match fs::remove_file(sessions_path.clone()) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        error!("failed to delete `{:?}`: {}", sessions_path, error);
+                    }
+                };
+                None
+            }
+        }
+    }
+
+    fn resolve_session_data_path() -> PathBuf {
+        let system_path = Self::system_session_data_path();
+
+        if let Some(path) = Self::default_session_data_path() {
+            // Use default path if it exists.
+            if path.exists() {
+                return path;
+            }
+
+            // Otherwise, use system path if it exists.
+            if system_path.exists() {
+                return system_path;
+            }
+
+            // Prefer default path if none exist already.
+            return path;
+        }
+
+        system_path
+    }
+
+    /// Default is `$XDG_CONFIG_HOME/niri/sessions.json`.
+    fn default_session_data_path() -> Option<PathBuf> {
+        let Some(dirs) = ProjectDirs::from("", "", "niri") else {
+            warn!("error retrieving home directory");
+            return None;
+        };
+
+        let mut path = dirs.config_dir().to_owned();
+        path.push("sessions.json");
+        Some(path)
+    }
+
+    fn system_session_data_path() -> PathBuf {
+        PathBuf::from("/etc/niri/sessions.json")
     }
 }
 
@@ -213,7 +307,7 @@ pub type ToplevelId = String;
 /// The session data for an application's windows.
 ///
 /// Corresponds to `xx_session_v1`.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionState {
     session_id: SessionId,
     /// Maps toplevel IDs ("names") to `xx_toplevel_session_v1` data.
@@ -289,7 +383,7 @@ impl ToplevelSession {
 /// The session data for a single toplevel window.
 ///
 /// Corresponds to `xx_toplevel_session_v1`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ToplevelSessionState {
     session_ref: ToplevelSessionRef,
     workspace: Option<ToplevelSessionWorkspace>,
@@ -330,7 +424,10 @@ impl ToplevelSessionState {
 
         self.attributes = Some(if mapped.is_floating() {
             WindowAttributes::Floating {
-                geometry: mapped.window.geometry(),
+                width: mapped.window.geometry().size.w,
+                height: mapped.window.geometry().size.h,
+                x: mapped.window.geometry().loc.x,
+                y: mapped.window.geometry().loc.y,
             }
         } else {
             let Some(column_index) = workspace.get_column_index_of(&mapped.window) else {
@@ -395,7 +492,7 @@ impl ToplevelSessionState {
     fn initial_width(&self) -> Option<PresetSize> {
         self.attributes.as_ref().map(|window| match window {
             WindowAttributes::Scrolling { width, .. } => (*width).into(),
-            WindowAttributes::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.w),
+            WindowAttributes::Floating { width, .. } => PresetSize::Fixed(*width),
         })
     }
 
@@ -406,15 +503,15 @@ impl ToplevelSessionState {
                 ..
             } => PresetSize::Fixed(*height as i32),
             WindowAttributes::Scrolling { height: _, .. } => PresetSize::Proportion(1.0),
-            WindowAttributes::Floating { geometry, .. } => PresetSize::Fixed(geometry.size.h),
+            WindowAttributes::Floating { height, .. } => PresetSize::Fixed(*height),
         })
     }
 
     fn initial_floating_position(&self) -> Option<FloatingPosition> {
         self.attributes.as_ref().and_then(|window| match window {
-            WindowAttributes::Floating { geometry } => Some(FloatingPosition {
-                x: FloatOrInt(geometry.loc.x.to_f64()),
-                y: FloatOrInt(geometry.loc.y.to_f64()),
+            WindowAttributes::Floating { x, y, .. } => Some(FloatingPosition {
+                x: FloatOrInt(x.to_f64()),
+                y: FloatOrInt(y.to_f64()),
                 relative_to: RelativeTo::TopLeft,
             }),
             _ => None,
@@ -423,14 +520,14 @@ impl ToplevelSessionState {
 }
 
 /// Identifies a workspace by name (if it has one) or an ID.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ToplevelSessionWorkspace {
     Named(String),
     Unnamed(WorkspaceId),
 }
 
 /// Describes where a toplevel window is located.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum WindowAttributes {
     /// The window is in a scrollable-tiling space.
     Scrolling {
@@ -449,8 +546,14 @@ pub enum WindowAttributes {
 
     /// The window is in a floating space.
     Floating {
-        /// Where the window is located and its size.
-        geometry: Rectangle<i32, Logical>,
+        /// The window's width, in logical pixels.
+        width: i32,
+        /// The window's height, in logical pixels.
+        height: i32,
+        /// The window's horizontal coordinate, in logical pixels from the left side.
+        x: i32,
+        /// The window's vertical coordinate, in logical pixels from the top.
+        y: i32,
     },
 }
 

@@ -7,6 +7,7 @@ use niri_config::utils::MergeWith as _;
 use niri_config::{CenterFocusedColumn, PresetSize, Struts};
 use niri_ipc::{ColumnDisplay, SizeChange, WindowLayout};
 use ordered_float::NotNan;
+use serde::{Deserialize, Serialize};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 
@@ -231,7 +232,7 @@ struct TileData {
 }
 
 /// Width of a column.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum ColumnWidth {
     /// Proportion of the current view width.
     Proportion(f64),
@@ -261,7 +262,7 @@ impl From<ColumnWidth> for PresetSize {
 /// you this behavior. The main reason to set a different window height, then, is when you want
 /// something in the window to fit exactly, e.g. to fit 30 lines in a terminal, which corresponds
 /// to the `Fixed` variant.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum WindowHeight {
     /// Automatically computed *tile* height, distributed across the column according to weights.
     ///
