@@ -1260,7 +1260,7 @@ impl State {
                 surface: Some(surface),
             } = &self.niri.keyboard_focus
             {
-                if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
+                if let Some(mapped) = self.niri.layout.find_window_mut(surface) {
                     mapped.set_is_focused(false);
                 }
             }
@@ -1268,7 +1268,7 @@ impl State {
                 surface: Some(surface),
             } = &focus
             {
-                if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
+                if let Some(mapped) = self.niri.layout.find_window_mut(surface) {
                     mapped.set_is_focused(true);
 
                     // If `mapped` does not have a focus timestamp, then the window is newly

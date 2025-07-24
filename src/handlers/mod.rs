@@ -373,7 +373,7 @@ impl DndGrabHandler for State {
         let mut activate_output = true;
         if let Some(target) = validated.then_some(target).flatten() {
             let root = self.niri.find_root_shell_surface(target);
-            if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
+            if let Some(mapped) = self.niri.layout.find_window(&root) {
                 let window = mapped.window.clone();
                 self.niri.layout.activate_window(&window);
                 self.niri.layer_shell_on_demand_focus = None;
@@ -532,7 +532,7 @@ impl ForeignToplevelHandler for State {
     }
 
     fn activate(&mut self, wl_surface: WlSurface) {
-        if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&wl_surface) {
+        if let Some(mapped) = self.niri.layout.find_window(&wl_surface) {
             let window = mapped.window.clone();
             self.niri.layout.activate_window(&window);
             self.niri.layer_shell_on_demand_focus = None;
@@ -541,7 +541,7 @@ impl ForeignToplevelHandler for State {
     }
 
     fn close(&mut self, wl_surface: WlSurface) {
-        if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&wl_surface) {
+        if let Some(mapped) = self.niri.layout.find_window(&wl_surface) {
             mapped.toplevel().send_close();
         }
     }
@@ -567,7 +567,7 @@ impl ForeignToplevelHandler for State {
     }
 
     fn unset_fullscreen(&mut self, wl_surface: WlSurface) {
-        if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&wl_surface) {
+        if let Some(mapped) = self.niri.layout.find_window(&wl_surface) {
             let window = mapped.window.clone();
             self.niri.layout.set_fullscreen(&window, false);
         }
@@ -664,10 +664,7 @@ impl SessionManagementHandler for State {
     }
 
     fn find_mapped_window(&mut self, surface: &WlSurface) -> Option<&Mapped> {
-        self.niri
-            .layout
-            .find_window_and_output(surface)
-            .map(|(mapped, _)| mapped)
+        self.niri.layout.find_window(surface)
     }
 }
 
@@ -833,7 +830,7 @@ impl XdgActivationHandler for State {
         surface: WlSurface,
     ) {
         if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
-            if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(&surface) {
+            if let Some(mapped) = self.niri.layout.find_window_mut(&surface) {
                 let window = mapped.window.clone();
                 if token_data.user_data.get::<UrgentOnlyMarker>().is_some() {
                     mapped.set_urgent(true);

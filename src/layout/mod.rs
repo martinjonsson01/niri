@@ -1383,6 +1383,16 @@ impl<W: LayoutElement> Layout<W> {
         None
     }
 
+    pub fn find_window(&self, wl_surface: &WlSurface) -> Option<&W> {
+        self.find_window_and_output(wl_surface)
+            .map(|(window, _)| window)
+    }
+
+    pub fn find_window_mut(&mut self, wl_surface: &WlSurface) -> Option<&mut W> {
+        self.find_window_and_output_mut(wl_surface)
+            .map(|(window, _)| window)
+    }
+
     pub fn find_window_workspace(&self, wl_surface: &WlSurface) -> Option<&Workspace<W>> {
         match &self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {

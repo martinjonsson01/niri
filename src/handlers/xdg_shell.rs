@@ -189,7 +189,7 @@ impl XdgShellHandler for State {
             return;
         };
 
-        let Some((mapped, _)) = self.niri.layout.find_window_and_output(wl_surface) else {
+        let Some(mapped) = self.niri.layout.find_window(wl_surface) else {
             return;
         };
 
@@ -941,7 +941,7 @@ impl XdgDecorationHandler for State {
         if toplevel.is_initial_configure_sent() {
             // If this is a mapped window, flag it as needs configure to avoid duplicate configures.
             let surface = toplevel.wl_surface();
-            if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
+            if let Some(mapped) = self.niri.layout.find_window_mut(surface) {
                 mapped.set_needs_configure();
             } else {
                 toplevel.send_configure();
@@ -960,7 +960,7 @@ impl XdgDecorationHandler for State {
         if toplevel.is_initial_configure_sent() {
             // If this is a mapped window, flag it as needs configure to avoid duplicate configures.
             let surface = toplevel.wl_surface();
-            if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
+            if let Some(mapped) = self.niri.layout.find_window_mut(surface) {
                 mapped.set_needs_configure();
             } else {
                 toplevel.send_configure();
@@ -1271,7 +1271,7 @@ impl State {
         };
 
         // Figure out if the root is a window or a layer surface.
-        if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
+        if let Some(mapped) = self.niri.layout.find_window(&root) {
             self.unconstrain_window_popup(popup, &mapped.window);
         } else if let Some((layer_surface, output)) = self.niri.layout.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
