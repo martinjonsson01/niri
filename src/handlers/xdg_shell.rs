@@ -843,6 +843,22 @@ impl XdgShellHandler for State {
         let window = mapped.window.clone();
         let output = output.cloned();
 
+        debug!(
+            "toplevel was closed: {:?} with session ref {:?}",
+            window.toplevel().unwrap().xdg_toplevel().id(),
+            mapped.session_ref(),
+        );
+
+        // Save toplevel state if it is tracked in a session.
+        mapped
+            .session_ref()
+            .and_then(|session_ref| {
+                self.niri
+                    .session_management_state
+                    .get_toplevel_session_mut(&session_ref)
+            })
+            .map(|toplevel_session| toplevel_session.update(mapped, &self.niri.layout));
+
         let id = mapped.id();
         self.niri
             .stop_casts_for_target(CastTarget::Window { id: id.get() });

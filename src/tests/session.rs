@@ -4,7 +4,7 @@ use insta::assert_snapshot;
 use niri_ipc::SizeChange;
 use tracing_subscriber::EnvFilter;
 use wayland_client::protocol::wl_surface::WlSurface;
-
+use crate::protocols::xx_session_management::SessionId;
 use super::*;
 use crate::tests::client::ClientId;
 use crate::tests::raw::xx_session_management::v1::client::xx_session_manager_v1::Reason;
@@ -12,7 +12,7 @@ use crate::tests::raw::xx_session_management::v1::client::xx_session_v1::XxSessi
 
 const TEST_WINDOW_NAME: &str = "test-window-name";
 
-fn set_up() -> (Fixture, ClientId, XxSessionV1) {
+fn set_up() -> (Fixture, ClientId, XxSessionV1, SessionId) {
     let directives = "niri=trace,smithay::backend::renderer::gles=error";
     let env_filter = EnvFilter::builder().parse_lossy(directives);
     let _ = tracing_subscriber::fmt()
@@ -26,7 +26,9 @@ fn set_up() -> (Fixture, ClientId, XxSessionV1) {
 
     let id = f.add_client();
     let session = f.client(id).get_session(Reason::Launch, None);
-    (f, id, session)
+    f.double_roundtrip(id);
+    let session_id = f.client(id).latest_session_id();
+    (f, id, session, session_id)
 }
 
 fn init_window(f: &mut Fixture, id: ClientId, session: &XxSessionV1, restore: bool) -> WlSurface {
@@ -62,7 +64,7 @@ fn init_window(f: &mut Fixture, id: ClientId, session: &XxSessionV1, restore: bo
 
 #[test]
 fn session_remembers_column_width() {
-    let (mut f, id, session) = set_up();
+    let (mut f, id, session, session_id) = set_up();
 
     // Create initial window.
     let surface = init_window(&mut f, id, &session, false);
@@ -83,6 +85,12 @@ fn session_remembers_column_width() {
     // Close window (this should save its state).
     f.client(id).close_window(&surface);
     f.double_roundtrip(id);
+    
+    // Create new client.
+    let id = f.add_client();
+
+    // Restore session.
+    let session = f.client(id).get_session(Reason::Launch, Some(session_id));
 
     // Restore window.
     let surface = init_window(&mut f, id, &session, true);
@@ -96,7 +104,7 @@ fn session_remembers_column_width() {
 
 #[test]
 fn session_restore_toplevel_sends_restored_event() {
-    let (mut f, id, session) = set_up();
+    let (mut f, id, session, _) = set_up();
 
     // Restore window.
     let surface = init_window(&mut f, id, &session, true);
@@ -108,7 +116,7 @@ fn session_restore_toplevel_sends_restored_event() {
 
 #[test]
 fn session_add_toplevel_does_not_send_restored_event() {
-    let (mut f, id, session) = set_up();
+    let (mut f, id, session, _) = set_up();
 
     // Restore window.
     let surface = init_window(&mut f, id, &session, false);

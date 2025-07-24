@@ -1354,4 +1354,8 @@ impl LayoutElement for Mapped {
             }
         });
     }
+
+    fn session_ref(&self) -> Option<&ToplevelSessionRef> {
+        self.session_ref()
+    }
 }

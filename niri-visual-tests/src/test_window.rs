@@ -6,6 +6,7 @@ use niri::layout::{
     ConfigureIntent, InteractiveResizeData, LayoutElement, LayoutElementRenderElement,
     LayoutElementRenderSnapshot, SizingMode,
 };
+use niri::protocols::xx_session_management::ToplevelSessionRef;
 use niri::render_helpers::offscreen::OffscreenData;
 use niri::render_helpers::renderer::NiriRenderer;
 use niri::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
@@ -266,5 +267,9 @@ impl LayoutElement for TestWindow {
 
     fn is_urgent(&self) -> bool {
         false
+    }
+
+    fn session_ref(&self) -> Option<&ToplevelSessionRef> {
+        None
     }
 }

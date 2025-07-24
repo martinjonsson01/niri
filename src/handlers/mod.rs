@@ -92,6 +92,7 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
+use crate::protocols::xx_session_management::ToplevelSessionRef;
 #[cfg(feature = "xx-session-management")]
 use crate::protocols::xx_session_management::{SessionManagementHandler, SessionManagerState};
 use crate::utils::{output_size, send_scale_transform};
@@ -667,10 +668,10 @@ impl SessionManagementHandler for State {
         self.niri.layout.find_window(surface)
     }
 
-    fn remove_session_from_mapped(&mut self, surface: &WlSurface) {
+    fn remove_session_from_mapped(&mut self, session_ref: ToplevelSessionRef) {
         self.niri
             .layout
-            .find_window_mut(surface)
+            .find_window_with_session_mut(session_ref)
             .map(Mapped::remove_session);
     }
 }

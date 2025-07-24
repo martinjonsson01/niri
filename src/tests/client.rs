@@ -36,6 +36,7 @@ use xx_session_manager_v1::{Reason, XxSessionManagerV1};
 use xx_session_v1::XxSessionV1;
 use xx_toplevel_session_v1::XxToplevelSessionV1;
 
+use crate::protocols::xx_session_management::SessionId;
 use crate::tests::raw::xx_session_management::v1::client::{
     xx_session_manager_v1, xx_session_v1, xx_toplevel_session_v1,
 };
@@ -258,7 +259,11 @@ impl Client {
             .clone()
     }
 
-    pub fn get_session(&self, reason: Reason, session_id: Option<String>) -> XxSessionV1 {
+    pub fn latest_session_id(&self) -> SessionId {
+        self.state.sessions.last().unwrap().clone()
+    }
+
+    pub fn get_session(&self, reason: Reason, session_id: Option<SessionId>) -> XxSessionV1 {
         self.state.get_session(reason, session_id)
     }
 
@@ -324,9 +329,7 @@ impl State {
     pub fn close_window(&mut self, surface: &WlSurface) {
         let window = self.window(surface);
 
-        // Unmap window.
-        window.remove_buffer();
-        window.commit();
+        window.xdg_toplevel.destroy();
 
         self.windows.retain_mut(|w| w.surface != *surface);
     }

@@ -29,7 +29,7 @@ const VERSION: u32 = 1;
 pub type SessionId = String;
 
 /// A reference to a specific toplevel session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ToplevelSessionRef {
     session_id: SessionId,
     toplevel_id: ToplevelId,
@@ -41,18 +41,6 @@ pub struct ToplevelSessionRef {
 pub struct SessionManagerState {
     /// Maps session IDs to `xx_session_v1` data.
     sessions: HashMap<SessionId, SessionState>,
-}
-
-impl SessionManagerState {
-    /// Gets a mutable reference to a toplevel's session state, if it exists.
-    pub fn get_toplevel_session_mut(
-        &mut self,
-        session_ref: &ToplevelSessionRef,
-    ) -> Option<&mut ToplevelSession> {
-        self.sessions
-            .get_mut(&session_ref.session_id)
-            .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
-    }
 }
 
 pub struct SessionManagerGlobalData {
@@ -78,6 +66,16 @@ impl SessionManagerState {
         Self {
             sessions: HashMap::new(),
         }
+    }
+
+    /// Gets a mutable reference to a toplevel's session state, if it exists.
+    pub fn get_toplevel_session_mut(
+        &mut self,
+        session_ref: &ToplevelSessionRef,
+    ) -> Option<&mut ToplevelSessionState> {
+        self.sessions
+            .get_mut(&session_ref.session_id)
+            .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
     }
 }
 
@@ -147,10 +145,12 @@ where
                     .or_insert(new_session_state);
 
                 if session_state.owned_by_client == Some(client_id.clone()) {
-                    manager.post_error(
-                        xx_session_manager_v1::Error::InUse,
-                        "session already in use",
+                    let error_message = format!(
+                        "session `{}` already in use by client {:?}",
+                        session_id, client_id
                     );
+                    warn!("{}", error_message);
+                    manager.post_error(xx_session_manager_v1::Error::InUse, error_message);
                     return;
                 }
                 session_state.owned_by_client = Some(client_id);
@@ -180,7 +180,7 @@ pub trait SessionManagementHandler {
     /// Gets the currently unmapped windows.
     fn unmapped_windows(&mut self) -> &mut HashMap<WlSurface, Unmapped>;
     /// Removes a session from any mapped window associated with the surface.
-    fn remove_session_from_mapped(&mut self, surface: &WlSurface);
+    fn remove_session_from_mapped(&mut self, surface: ToplevelSessionRef);
 }
 
 #[allow(missing_docs)]
@@ -217,7 +217,7 @@ pub struct SessionState {
     session_id: SessionId,
     owned_by_client: Option<ClientId>,
     /// Maps toplevel IDs ("names") to `xx_toplevel_session_v1` data.
-    sessions: HashMap<ToplevelId, ToplevelSession>,
+    sessions: HashMap<ToplevelId, ToplevelSessionState>,
 }
 
 impl SessionState {
@@ -231,8 +231,9 @@ impl SessionState {
 }
 
 /// A session which may store persistent state for a toplevel.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToplevelSession {
+    surface: WlSurface,
     resource: XxToplevelSessionV1,
     state: ToplevelSessionState,
     /// Whether the session was created using xx_session_v1::restore_toplevel
@@ -255,10 +256,6 @@ impl ToplevelSession {
             toplevel.id()
         );
         self.resource.restored(toplevel)
-    }
-
-    pub fn update(&mut self, mapped: &Mapped, layout: &Layout<Mapped>) {
-        self.state.update(mapped, layout);
     }
 
     pub fn initial_workspace(&self) -> Option<&ToplevelSessionWorkspace> {
@@ -293,22 +290,20 @@ impl ToplevelSession {
 /// The session data for a single toplevel window.
 ///
 /// Corresponds to `xx_toplevel_session_v1`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToplevelSessionState {
     session_ref: ToplevelSessionRef,
-    surface: WlSurface,
     workspace: Option<ToplevelSessionWorkspace>,
     attributes: Option<WindowAttributes>,
 }
 
 impl ToplevelSessionState {
-    fn new(surface: WlSurface, session_id: SessionId, toplevel_id: ToplevelId) -> Self {
+    fn new(session_id: SessionId, toplevel_id: ToplevelId) -> Self {
         Self {
             session_ref: ToplevelSessionRef {
                 session_id,
                 toplevel_id,
             },
-            surface,
             workspace: None,
             attributes: None,
         }
@@ -318,7 +313,7 @@ impl ToplevelSessionState {
         self.session_ref.clone()
     }
 
-    fn update(&mut self, mapped: &Mapped, layout: &Layout<Mapped>) {
+    pub fn update(&mut self, mapped: &Mapped, layout: &Layout<Mapped>) {
         let surface = mapped.window.wl_surface().expect("no x11 support");
 
         let Some(workspace) = layout.find_window_workspace(&surface) else {
@@ -429,14 +424,14 @@ impl ToplevelSessionState {
 }
 
 /// Identifies a workspace by name (if it has one) or an ID.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ToplevelSessionWorkspace {
     Named(String),
     Unnamed(WorkspaceId),
 }
 
 /// Describes where a toplevel window is located.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WindowAttributes {
     /// The window is in a scrollable-tiling space.
     Scrolling {
@@ -486,8 +481,8 @@ where
                     session_state
                         .sessions
                         .iter()
-                        .map(|(_, toplevel_state)| &toplevel_state.state.surface)
-                        .for_each(|surface| state.remove_session_from_mapped(surface))
+                        .map(|(_, toplevel_state)| toplevel_state.get_ref())
+                        .for_each(|session_ref| state.remove_session_from_mapped(session_ref))
                 });
                 debug!("removed session `{}`", data.session_id);
             }
@@ -496,144 +491,148 @@ where
                 toplevel,
                 name: toplevel_id,
             } => {
-                let Some(surface) = state.xdg_shell_state().get_toplevel(&toplevel) else {
-                    error!("Tried to add a toplevel session with an invalid toplevel");
-                    return;
-                };
-
-                if data.sessions.contains_key(&toplevel_id) {
-                    session.post_error(
-                        xx_session_v1::Error::NameInUse,
-                        "toplevel name is already present in session",
-                    );
-                    return;
-                }
-
-                if let Some(mapped) = state.find_mapped_window(surface.wl_surface()) {
-                    session.post_error(
-                        xx_session_v1::Error::AlreadyMapped,
-                        format!(
-                            "toplevel {:?} was already mapped when restored",
-                            mapped
-                                .window
-                                .toplevel()
-                                .expect("no x11 support")
-                                .xdg_toplevel()
-                                .id()
-                        ),
-                    );
-                    return;
-                }
-
-                let toplevel_session_state = ToplevelSessionState::new(
-                    surface.wl_surface().clone(),
-                    data.session_id.clone(),
-                    toplevel_id.clone(),
+                add_toplevel(
+                    false,
+                    state,
+                    session,
+                    data,
+                    data_init,
+                    id,
+                    &toplevel,
+                    toplevel_id,
                 );
-                let toplevel_resource = data_init.init(id, toplevel_session_state.clone());
-                let toplevel_session = ToplevelSession {
-                    resource: toplevel_resource,
-                    state: toplevel_session_state,
-                    is_restoring: false,
-                };
-
-                let Some(session_state) = state
-                    .session_management_state()
-                    .sessions
-                    .get_mut(&data.session_id)
-                else {
-                    error!("Unable to find session with id `{}`", data.session_id);
-                    return;
-                };
-
-                session_state
-                    .sessions
-                    .insert(toplevel_id, toplevel_session.clone());
-
-                let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
-                    error!("Unable to find unmapped window");
-                    return;
-                };
-                unmapped.session = Some(toplevel_session);
-
-                debug!("added toplevel with session state: {:?}", unmapped.session);
             }
             xx_session_v1::Request::RestoreToplevel {
                 id,
                 toplevel,
                 name: toplevel_id,
             } => {
-                let Some(surface) = state.xdg_shell_state().get_toplevel(&toplevel) else {
-                    error!("Tried to restore a toplevel session with an invalid toplevel");
-                    return;
-                };
-
-                if data.sessions.contains_key(&toplevel_id) {
-                    session.post_error(
-                        xx_session_v1::Error::NameInUse,
-                        "toplevel name is already present in session",
-                    );
-                    return;
-                }
-
-                if let Some(mapped) = state.find_mapped_window(surface.wl_surface()) {
-                    session.post_error(
-                        xx_session_v1::Error::AlreadyMapped,
-                        format!(
-                            "toplevel {:?} was already mapped when restored",
-                            mapped
-                                .window
-                                .toplevel()
-                                .expect("no x11 support")
-                                .xdg_toplevel()
-                                .id()
-                        ),
-                    );
-                    return;
-                }
-
-                let toplevel_session_state = ToplevelSessionState::new(
-                    surface.wl_surface().clone(),
-                    data.session_id.clone(),
-                    toplevel_id.clone(),
-                );
-                let toplevel_resource = data_init.init(id, toplevel_session_state.clone());
-                let toplevel_session = ToplevelSession {
-                    resource: toplevel_resource,
-                    state: toplevel_session_state,
-                    is_restoring: true,
-                };
-
-                let Some(session_state) = state
-                    .session_management_state()
-                    .sessions
-                    .get_mut(&data.session_id)
-                else {
-                    error!("Unable to find session with id `{}`", data.session_id);
-                    return;
-                };
-
-                let mut session = session_state
-                    .sessions
-                    .entry(toplevel_id)
-                    .or_insert_with(|| toplevel_session.clone())
-                    .clone();
-
-                session.is_restoring = true;
-
-                let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
-                    error!("Unable to find unmapped window");
-                    return;
-                };
-                unmapped.session = Some(session);
-
-                debug!(
-                    "restoring toplevel with session state: {:?}",
-                    unmapped.session
+                add_toplevel(
+                    true,
+                    state,
+                    session,
+                    &data,
+                    data_init,
+                    id,
+                    &toplevel,
+                    toplevel_id,
                 );
             }
         }
     }
+}
+
+fn add_toplevel<D>(
+    is_restoring: bool,
+    state: &mut D,
+    session: &XxSessionV1,
+    data: &SessionState,
+    data_init: &mut DataInit<D>,
+    id: New<XxToplevelSessionV1>,
+    toplevel: &XdgToplevel,
+    toplevel_id: String,
+) where
+    D: Dispatch<XxSessionV1, SessionState>,
+    D: Dispatch<XxToplevelSessionV1, ToplevelSessionState>,
+    D: SessionManagementHandler,
+    D: 'static,
+{
+    let op_name = if is_restoring { "restore" } else { "add" };
+    let Some(surface) = state.xdg_shell_state().get_toplevel(&toplevel) else {
+        error!(
+            "Tried to {} a toplevel session with an invalid toplevel",
+            op_name
+        );
+        return;
+    };
+
+    let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
+        error!("Unable to find unmapped window");
+        return;
+    };
+
+    let new_session_ref = ToplevelSessionRef {
+        session_id: data.session_id.clone(),
+        toplevel_id: toplevel_id.clone(),
+    };
+    if unmapped
+        .session
+        .as_ref()
+        .is_some_and(|session| session.state.session_ref == new_session_ref)
+    {
+        let error_message = format!(
+            "cannot {}: toplevel `{}` is already present in session",
+            op_name, toplevel_id
+        );
+        warn!("{}", error_message);
+        session.post_error(xx_session_v1::Error::NameInUse, error_message);
+        return;
+    }
+
+    if let Some(mapped) = state.find_mapped_window(surface.wl_surface()) {
+        let error_message = format!(
+            "cannot {}: toplevel {:?} was already mapped when restored",
+            op_name,
+            mapped
+                .window
+                .toplevel()
+                .expect("no x11 support")
+                .xdg_toplevel()
+                .id()
+        );
+        warn!("{}", error_message);
+        session.post_error(xx_session_v1::Error::AlreadyMapped, error_message);
+        return;
+    }
+
+    let Some(session_state) = state
+        .session_management_state()
+        .sessions
+        .get_mut(&data.session_id)
+    else {
+        error!("Unable to find session with id `{}`", data.session_id);
+        return;
+    };
+
+    let new_toplevel_session_state =
+        ToplevelSessionState::new(data.session_id.clone(), toplevel_id.clone());
+
+    // We may either create a new toplevel session state, or fetch an existing one.
+    let toplevel_session_state = if is_restoring {
+        let toplevel_session_state = session_state
+            .sessions
+            .entry(toplevel_id)
+            .or_insert_with(|| new_toplevel_session_state.clone())
+            .clone();
+        toplevel_session_state
+    } else {
+        session_state
+            .sessions
+            .insert(toplevel_id, new_toplevel_session_state.clone());
+        new_toplevel_session_state
+    };
+
+    let toplevel_resource = data_init.init(id, toplevel_session_state.clone());
+
+    let Some(unmapped) = state.unmapped_windows().get_mut(surface.wl_surface()) else {
+        error!("Unable to find unmapped window");
+        return;
+    };
+
+    debug!(
+        "{} toplevel with session state: {:?}",
+        if is_restoring { "restoring" } else { "added" },
+        toplevel_session_state
+    );
+
+    let toplevel_session = ToplevelSession {
+        surface: surface.wl_surface().clone(),
+        resource: toplevel_resource,
+        state: toplevel_session_state.clone(),
+        is_restoring,
+    };
+
+    unmapped.session = Some(toplevel_session);
 }
 
 impl<D> Dispatch<XxToplevelSessionV1, ToplevelSessionState, D> for SessionManagerState

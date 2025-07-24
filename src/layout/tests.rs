@@ -276,6 +276,10 @@ impl LayoutElement for TestWindow {
     fn is_urgent(&self) -> bool {
         false
     }
+
+    fn session_ref(&self) -> Option<&ToplevelSessionRef> {
+        None
+    }
 }
 
 fn arbitrary_size() -> impl Strategy<Value = Size<i32, Logical>> {

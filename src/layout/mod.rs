@@ -59,6 +59,7 @@ use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::scrolling::ScrollDirection;
 use crate::niri_render_elements;
+use crate::protocols::xx_session_management::ToplevelSessionRef;
 use crate::render_helpers::offscreen::OffscreenData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::snapshot::RenderSnapshot;
@@ -131,6 +132,9 @@ pub trait LayoutElement {
 
     /// Unique ID of this element.
     fn id(&self) -> &Self::Id;
+
+    /// A reference to the session associated with this element.
+    fn session_ref(&self) -> Option<&ToplevelSessionRef>;
 
     /// Visual size of the element.
     ///
@@ -1414,6 +1418,32 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         None
+    }
+
+    pub fn find_window_with_session_mut(
+        &mut self,
+        session_ref: ToplevelSessionRef,
+    ) -> Option<&mut W> {
+        let moving_window = self
+            .interactive_move
+            .as_mut()
+            .and_then(|x| x.moving_mut())
+            .map(|move_| move_.tile.window_mut())
+            .filter(|window| {
+                window
+                    .session_ref()
+                    .is_some_and(|window_session_ref| *window_session_ref == session_ref)
+            });
+
+        let other_windows = Self::iter_workspaces_mut(&mut self.monitor_set)
+            .flat_map(|ws| ws.windows_mut().map(move |win| win))
+            .find(|window| {
+                window
+                    .session_ref()
+                    .is_some_and(|window_session_ref| *window_session_ref == session_ref)
+            });
+
+        moving_window.or(other_windows)
     }
 
     /// Computes the window-geometry-relative target rect for popup unconstraining.
@@ -4914,10 +4944,16 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn workspaces_mut(&mut self) -> impl Iterator<Item = &mut Workspace<W>> + '_ {
+        Self::iter_workspaces_mut(&mut self.monitor_set)
+    }
+
+    fn iter_workspaces_mut(
+        monitors: &mut MonitorSet<W>,
+    ) -> impl Iterator<Item = &mut Workspace<W>> + '_ {
         let iter_normal;
         let iter_no_outputs;
 
-        match &mut self.monitor_set {
+        match monitors {
             MonitorSet::Normal { monitors, .. } => {
                 let it = monitors
                     .iter_mut()

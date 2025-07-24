@@ -274,23 +274,6 @@ impl CompositorHandler for State {
                 // This is a commit of a previously-mapped toplevel.
                 let is_mapped = is_mapped(surface);
 
-                if !is_mapped {
-                    debug!(
-                        "toplevel got unmapped: {:?} with session ref {:?}",
-                        window.toplevel().unwrap().xdg_toplevel().id(),
-                        mapped.session_ref(),
-                    );
-                    // Save toplevel state if it is tracked in a session.
-                    mapped
-                        .session_ref()
-                        .and_then(|session_ref| {
-                            self.niri
-                                .session_management_state
-                                .get_toplevel_session_mut(&session_ref)
-                        })
-                        .map(|toplevel_session| toplevel_session.update(mapped, &self.niri.layout));
-                }
-
                 // Must start the close animation before window.on_commit().
                 let transaction = Transaction::new();
                 if !is_mapped {
