@@ -12,6 +12,23 @@ use crate::tests::raw::xx_session_management::v1::client::xx_session_v1::XxSessi
 
 const TEST_WINDOW_NAME: &str = "test-window-name";
 
+fn set_up() -> (Fixture, ClientId, XxSessionV1) {
+    let directives = "niri=trace,smithay::backend::renderer::gles=error";
+    let env_filter = EnvFilter::builder().parse_lossy(directives);
+    let _ = tracing_subscriber::fmt()
+        .compact()
+        .with_writer(io::stderr)
+        .with_env_filter(env_filter)
+        .try_init();
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let session = f.client(id).get_session(Reason::Launch, None);
+    (f, id, session)
+}
+
 fn init_window(f: &mut Fixture, id: ClientId, session: &XxSessionV1, restore: bool) -> WlSurface {
     let client = f.client(id);
     let window = client.create_window();
@@ -45,19 +62,7 @@ fn init_window(f: &mut Fixture, id: ClientId, session: &XxSessionV1, restore: bo
 
 #[test]
 fn session_remembers_column_width() {
-    let directives = "niri=trace,smithay::backend::renderer::gles=error";
-    let env_filter = EnvFilter::builder().parse_lossy(directives);
-    tracing_subscriber::fmt()
-        .compact()
-        .with_writer(io::stderr)
-        .with_env_filter(env_filter)
-        .init();
-
-    let mut f = Fixture::new();
-    f.add_output(1, (1920, 1080));
-
-    let id = f.add_client();
-    let session = f.client(id).get_session(Reason::Launch, None);
+    let (mut f, id, session) = set_up();
 
     // Create initial window.
     let surface = init_window(&mut f, id, &session, false);
@@ -87,4 +92,28 @@ fn session_remembers_column_width() {
         f.client(id).window(&surface).format_recent_configures(),
         @"size: 500 × 1048, bounds: 1888 × 1048, states: [Activated]"
     );
+}
+
+#[test]
+fn session_restore_toplevel_sends_restored_event() {
+    let (mut f, id, session) = set_up();
+
+    // Restore window.
+    let surface = init_window(&mut f, id, &session, true);
+
+    // We should get a xx_toplevel_session_v1::restored event.
+    let window = f.client(id).window(&surface);
+    assert!(window.restored);
+}
+
+#[test]
+fn session_add_toplevel_does_not_send_restored_event() {
+    let (mut f, id, session) = set_up();
+
+    // Restore window.
+    let surface = init_window(&mut f, id, &session, false);
+
+    // We should NOT get a xx_toplevel_session_v1::restored event.
+    let window = f.client(id).window(&surface);
+    assert!(!window.restored);
 }
