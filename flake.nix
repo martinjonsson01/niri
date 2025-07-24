@@ -42,6 +42,7 @@
           withSystemd ? true,
           withScreencastSupport ? true,
           withDinit ? false,
+          withSessionManagement ? true,
         }:
 
         rustPlatform.buildRustPackage {
@@ -103,7 +104,8 @@
             lib.optional withDbus "dbus"
             ++ lib.optional withDinit "dinit"
             ++ lib.optional withScreencastSupport "xdp-gnome-screencast"
-            ++ lib.optional withSystemd "systemd";
+            ++ lib.optional withSystemd "systemd"
+            ++ lib.optional withSessionManagement "xx-session-management";
           buildNoDefaultFeatures = true;
 
           # ever since this commit:
