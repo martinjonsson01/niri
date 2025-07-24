@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::ops::Not;
 
 use calloop::Interest;
 use niri_config::PresetSize;
@@ -1153,14 +1154,29 @@ impl State {
             .unwrap_or_else(|| rules.compute_open_floating(toplevel));
 
         // Tell the surface the preferred size and bounds for its likely output.
-        let ws = rules
-            .open_on_workspace
-            .as_deref()
-            .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
-            .unwrap_or_else(|| {
-                mon.map(|mon| mon.active_workspace_ref())
-                    .or_else(|| self.niri.layout.active_workspace())
-            });
+
+        // First, try to get workspace from session.
+        let ws = session
+            .and_then(ToplevelSession::initial_workspace)
+            .and_then(|session_workspace| match session_workspace {
+                ToplevelSessionWorkspace::Named(name) => {
+                    self.niri.layout.find_workspace_by_name(name)
+                }
+                ToplevelSessionWorkspace::Unnamed(id) => self.niri.layout.find_workspace_by_id(*id),
+            })
+            .map(|(_, workspace)| workspace);
+
+        // Then, try to get it from rules.
+        let ws = ws.or_else(|| {
+            rules
+                .open_on_workspace
+                .as_deref()
+                .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                .unwrap_or_else(|| mon.map(|mon| mon.active_workspace_ref()))
+        });
+
+        // Otherwise, just use the currently active workspace.
+        let ws = ws.or_else(|| self.niri.layout.active_workspace());
 
         let mut is_pending_maximized = false;
         if let Some(ws) = ws {
@@ -1208,8 +1224,16 @@ impl State {
             );
         }
 
+        // First, try to get tiled state from session.
+        let tiled_state = session
+            .and_then(ToplevelSession::was_floating)
+            .map(Not::not);
+
+        // Otherwise, get it from rules.
+        let tiled_state = tiled_state.or(rules.tiled_state);
+
         // Set the tiled state for the initial configure.
-        update_tiled_state(toplevel, config.prefer_no_csd, rules.tiled_state);
+        update_tiled_state(toplevel, config.prefer_no_csd, tiled_state);
 
         // Set the configured settings.
         *state = InitialConfigureState::Configured {

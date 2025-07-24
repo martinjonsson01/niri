@@ -421,10 +421,6 @@ impl Window {
         self.surface.attach(None, 0, 0);
     }
 
-    pub fn remove_buffer(&self) {
-        self.surface.attach(None, 0, 0);
-    }
-
     pub fn set_size(&self, w: u16, h: u16) {
         self.viewport.set_destination(i32::from(w), i32::from(h));
     }
