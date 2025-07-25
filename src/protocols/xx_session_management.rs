@@ -2,7 +2,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::iter::repeat_with;
 use std::path::PathBuf;
+use std::time::Duration;
 
+use calloop::channel::Sender;
+use calloop::timer::{TimeoutAction, Timer};
+use calloop::{LoopHandle, RegistrationToken};
 use directories::ProjectDirs;
 use niri_config::{FloatOrInt, FloatingPosition, PresetSize, RelativeTo};
 use serde::{Deserialize, Serialize};
@@ -29,6 +33,12 @@ use crate::window::{Mapped, Unmapped};
 
 const VERSION: u32 = 1;
 
+/// How long after the last toplevel update that the sessions should be saved.
+const SESSION_SAVE_DELAY: Duration = Duration::from_secs(3);
+
+/// How often to automatically update the state of session-tracked toplevels.
+const AUTO_UPDATE_INTERVAL: Duration = Duration::from_secs(10 * 60); // from_mins is unstable
+
 /// Used to globally identify a session.
 pub type SessionId = String;
 
@@ -42,10 +52,20 @@ pub struct ToplevelSessionRef {
 /// Session data for all applications.
 ///
 /// A global object shared by all clients.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SessionManagerState {
+    /// Token for any currently running auto save timer.
+    pub auto_save_timer: Option<RegistrationToken>,
+    /// Used to send events whenever a toplevel's state is refreshed.
+    toplevel_updated: Sender<ToplevelUpdated>,
     /// Maps session IDs to `xx_session_v1` data.
     sessions: HashMap<SessionId, SessionState>,
+}
+
+/// Emitted whenever a toplevel's session state is updated.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ToplevelUpdated {
+    session_ref: ToplevelSessionRef,
 }
 
 pub struct SessionManagerGlobalData {
@@ -53,7 +73,7 @@ pub struct SessionManagerGlobalData {
 }
 
 impl SessionManagerState {
-    pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
+    pub fn new<D, F>(display: &DisplayHandle, filter: F, event_loop: &LoopHandle<D>) -> Self
     where
         D: GlobalDispatch<XxSessionManagerV1, SessionManagerGlobalData>,
         D: Dispatch<XxSessionManagerV1, ()>,
@@ -68,21 +88,48 @@ impl SessionManagerState {
         };
         display.create_global::<D, XxSessionManagerV1, _>(VERSION, global_data);
 
-        let loaded_sessions = Self::load_sessions().map(|state| state.sessions);
+        let (toplevel_updated, on_toplevel_updated) = calloop::channel::channel();
+        event_loop
+            .insert_source(on_toplevel_updated, move |_, _, state| {
+                state.save_sessions_after(SESSION_SAVE_DELAY)
+            })
+            .unwrap();
+
+        let auto_update_timer = Timer::from_duration(AUTO_UPDATE_INTERVAL);
+        event_loop
+            .insert_source(auto_update_timer, |_, _, state| {
+                debug!("auto-updating session state...");
+                state.update_tracked_toplevels();
+                // Reschedule to run again.
+                TimeoutAction::ToDuration(AUTO_UPDATE_INTERVAL)
+            })
+            .unwrap();
+
+        let loaded_sessions = Self::load_sessions();
 
         Self {
+            auto_save_timer: None,
+            toplevel_updated,
             sessions: loaded_sessions.unwrap_or_default(),
         }
     }
 
-    /// Gets a mutable reference to a toplevel's session state, if it exists.
-    pub fn get_toplevel_session_mut(
-        &mut self,
-        session_ref: &ToplevelSessionRef,
-    ) -> Option<&mut ToplevelSessionState> {
-        self.sessions
-            .get_mut(&session_ref.session_id)
-            .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
+    /// Updates the session state of the given toplevel.
+    pub fn update_toplevel(&mut self, mapped: &Mapped, layout: &Layout<Mapped>) {
+        mapped.session_ref().and_then(|session_ref| {
+            self.sessions
+                .get_mut(&session_ref.session_id)
+                .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
+                .map(|session_state| session_state.update(mapped, layout))
+                .map(|_| {
+                    let event = ToplevelUpdated {
+                        session_ref: session_ref.clone(),
+                    };
+                    if let Err(error) = self.toplevel_updated.send(event) {
+                        error!("failed to send ToplevelUpdated event: {}", error);
+                    }
+                })
+        });
     }
 
     /// Checks whether a session with the given ID exists.
@@ -92,7 +139,7 @@ impl SessionManagerState {
 
     /// Saves session data to persistent storage.
     pub fn save(&self) {
-        let json = match serde_json::to_string(&self) {
+        let json = match serde_json::to_string(&self.sessions) {
             Ok(json) => json,
             Err(error) => {
                 error!("failed to serialize sessions data: {}", error);
@@ -111,7 +158,7 @@ impl SessionManagerState {
     }
 
     /// Loads saved sessions from persistent storage.
-    pub fn load_sessions() -> Option<Self> {
+    pub fn load_sessions() -> Option<HashMap<SessionId, SessionState>> {
         let sessions_path = Self::resolve_session_data_path();
         let sessions_json = match fs::read_to_string(sessions_path.clone()) {
             Ok(json) => json,
@@ -120,7 +167,7 @@ impl SessionManagerState {
                 return None;
             }
         };
-        match serde_json::from_str::<SessionManagerState>(&sessions_json) {
+        match serde_json::from_str::<HashMap<SessionId, SessionState>>(&sessions_json) {
             Ok(state) => {
                 info!("loaded sessions data from `{:?}`", sessions_path);
                 error!("state `{:?}`", state);
@@ -299,6 +346,10 @@ pub trait SessionManagementHandler {
     fn remove_session_from_mapped(&mut self, surface: ToplevelSessionRef);
     /// Checks if any of the client's windows are part of a given session.
     fn any_window_in_session(&self, client_id: &ClientId, session_id: &SessionId) -> bool;
+    /// Schedule autosave of sessions to happen after a given delay.
+    fn save_sessions_after(&mut self, delay: Duration);
+    /// Updates the state of any session-tracked toplevels.
+    fn update_tracked_toplevels(&mut self);
 }
 
 #[allow(missing_docs)]

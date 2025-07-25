@@ -851,14 +851,9 @@ impl XdgShellHandler for State {
         );
 
         // Save toplevel state if it is tracked in a session.
-        mapped
-            .session_ref()
-            .and_then(|session_ref| {
-                self.niri
-                    .session_management_state
-                    .get_toplevel_session_mut(&session_ref)
-            })
-            .map(|toplevel_session| toplevel_session.update(mapped, &self.niri.layout));
+        self.niri
+            .session_management_state
+            .update_toplevel(mapped, &self.niri.layout);
 
         let id = mapped.id();
         self.niri

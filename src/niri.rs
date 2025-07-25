@@ -2290,9 +2290,13 @@ impl Niri {
             ScreencopyManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
         let viewporter_state = ViewporterState::new::<State>(&display_handle);
         let xdg_foreign_state = XdgForeignState::new::<State>(&display_handle);
+
         #[cfg(feature = "xx-session-management")]
-        let session_management_state =
-            SessionManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
+        let session_management_state = SessionManagerState::new::<State, _>(
+            &display_handle,
+            client_is_unrestricted,
+            &event_loop,
+        );
 
         let is_tty = matches!(backend, Backend::Tty(_));
         let gamma_control_manager_state =

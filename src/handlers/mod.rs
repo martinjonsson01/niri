@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use calloop::timer::{TimeoutAction, Timer};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::DrmNode;
 use smithay::backend::input::{InputEvent, TabletToolDescriptor};
@@ -700,6 +701,35 @@ impl SessionManagementHandler for State {
                     .session_ref()
                     .is_some_and(|session_ref| session_ref.session_id == *session_id)
             })
+    }
+
+    fn save_sessions_after(&mut self, delay: Duration) {
+        // Stop the previous save, if any.
+        if let Some(token) = self.session_management_state().auto_save_timer.take() {
+            self.niri.event_loop.remove(token);
+        }
+
+        let save_timer = Timer::from_duration(delay);
+
+        let token = self
+            .niri
+            .event_loop
+            .insert_source(save_timer, move |_, _, state| {
+                state.session_management_state().save();
+                // Don't repeat timer.
+                TimeoutAction::Drop
+            })
+            .unwrap();
+
+        self.session_management_state().auto_save_timer = Some(token);
+    }
+
+    fn update_tracked_toplevels(&mut self) {
+        self.niri.layout.windows().for_each(|(_, window)| {
+            self.niri
+                .session_management_state
+                .update_toplevel(window, &self.niri.layout)
+        })
     }
 }
 
