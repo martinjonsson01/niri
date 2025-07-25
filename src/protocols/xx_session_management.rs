@@ -248,6 +248,7 @@ where
                     return;
                 };
 
+                // TODO: implement session replacing.
                 let client_id = client.id();
                 if state.any_window_in_session(&client_id, &session_id) {
                     let error_message = format!(
