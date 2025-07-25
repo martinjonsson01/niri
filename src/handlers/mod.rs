@@ -658,6 +658,12 @@ impl SessionManagementHandler for State {
         &mut self.niri.session_management_state
     }
 
+    fn session_exists(&self, session_id: &SessionId) -> bool {
+        self.niri
+            .session_management_state
+            .session_exists(session_id)
+    }
+
     fn xdg_shell_state(&self) -> &XdgShellState {
         &self.niri.xdg_shell_state
     }

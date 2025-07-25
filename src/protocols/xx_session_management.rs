@@ -85,6 +85,11 @@ impl SessionManagerState {
             .and_then(|session| session.sessions.get_mut(&session_ref.toplevel_id))
     }
 
+    /// Checks whether a session with the given ID exists.
+    pub fn session_exists(&self, session_id: &SessionId) -> bool {
+        self.sessions.contains_key(session_id)
+    }
+
     /// Saves session data to persistent storage.
     pub fn save(&self) {
         let json = match serde_json::to_string(&self) {
@@ -171,6 +176,16 @@ impl SessionManagerState {
     fn system_session_data_path() -> PathBuf {
         PathBuf::from("/etc/niri/sessions.json")
     }
+
+    fn generate_unique_session_id(state: &mut impl SessionManagementHandler) -> Option<String> {
+        repeat_with(|| {
+            repeat_with(fastrand::alphanumeric)
+                .take(32)
+                .collect::<String>()
+        })
+        // Keep generating new ones until a unique one is found...
+        .find(|new_session_id| !state.session_exists(new_session_id))
+    }
 }
 
 impl<D> GlobalDispatch<XxSessionManagerV1, SessionManagerGlobalData, D> for SessionManagerState
@@ -223,10 +238,15 @@ where
                 session: maybe_session_id,
                 ..
             } => {
-                let session_id = maybe_session_id.unwrap_or_else(|| {
-                    // session_id was not provided, so generate one.
-                    repeat_with(fastrand::alphanumeric).take(32).collect()
-                });
+                let Some(session_id) = maybe_session_id
+                    // Unknown session IDs are treated as None.
+                    .filter(|session_id| state.session_exists(session_id))
+                    // A valid session ID was not provided, so generate a unique one.
+                    .or_else(|| Self::generate_unique_session_id(state))
+                else {
+                    error!("cannot create new session: unable to generate unique session id");
+                    return;
+                };
 
                 let client_id = client.id();
                 if state.any_window_in_session(&client_id, &session_id) {
@@ -266,6 +286,8 @@ where
 pub trait SessionManagementHandler {
     /// Get a mutable reference to the session management state.
     fn session_management_state(&mut self) -> &mut SessionManagerState;
+    /// Checks whether a session with the given ID exists.
+    fn session_exists(&self, session_id: &SessionId) -> bool;
     /// Get a reference to the [`XdgShellState`].
     fn xdg_shell_state(&self) -> &XdgShellState;
     /// Finds a window mapped to the given surface, if it exists.
