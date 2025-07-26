@@ -769,26 +769,57 @@ fn add_toplevel<D>(
         return;
     }
 
-    let Some(session_state) = state
-        .session_management_state()
-        .sessions
-        .get_mut(&data.session_id)
-    else {
-        error!("Unable to find session with id `{}`", data.session_id);
-        return;
-    };
+    let sessions = &mut state.session_management_state().sessions;
 
     let new_toplevel_session_state = ToplevelSessionState::new(new_session_ref);
 
     // We may either create a new toplevel session state, or fetch an existing one.
     let toplevel_session_state = if is_restoring {
-        let toplevel_session_state = session_state
-            .sessions
-            .entry(toplevel_id)
-            .or_insert_with(|| new_toplevel_session_state.clone())
-            .clone();
+        let Some(session_state) = sessions.get(&data.session_id) else {
+            error!("Unable to find session with id `{}`", data.session_id);
+            return;
+        };
+        // First, try to get state from current session.
+        let toplevel_session_state = session_state.sessions.get(&toplevel_id).cloned();
+        // If it doesn't exist, see if there's an old session we can restore this toplevel from.
+        let toplevel_session_state = toplevel_session_state.or_else(|| {
+            sessions
+                .values()
+                .find(|old_session| {
+                    old_session
+                        .sessions
+                        .get(&toplevel_id)
+                        .is_some_and(|old_toplevel_session| {
+                            // Ensure old session is from same app, to avoid toplevel ID conflicts.
+                            old_toplevel_session.session_ref.app_id == app_id
+                        })
+                })
+                .and_then(|old_session| old_session.sessions.get(&toplevel_id).cloned())
+                .map(|old_toplevel_session| {
+                    info!(
+                        "couldn't find toplevel `{}` in current session `{}`, \
+                        instead restoring from session `{}`...",
+                        toplevel_id, data.session_id, old_toplevel_session.session_ref.session_id
+                    );
+                    // Replace the session reference to adopt it into the current session.
+                    ToplevelSessionState {
+                        session_ref: ToplevelSessionRef {
+                            session_id: data.session_id.clone(),
+                            ..old_toplevel_session.session_ref
+                        },
+                        ..old_toplevel_session
+                    }
+                })
+        });
+        // Otherwise, start with a blank slate.
+        let toplevel_session_state =
+            toplevel_session_state.unwrap_or_else(|| new_toplevel_session_state);
         toplevel_session_state
     } else {
+        let Some(session_state) = sessions.get_mut(&data.session_id) else {
+            error!("Unable to find session with id `{}`", data.session_id);
+            return;
+        };
         session_state
             .sessions
             .insert(toplevel_id, new_toplevel_session_state.clone());
