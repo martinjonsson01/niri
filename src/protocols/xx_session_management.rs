@@ -29,6 +29,7 @@ use super::raw::xx_session_management::v1::server::{
 use crate::layout::scrolling::{ColumnWidth, WindowHeight};
 use crate::layout::workspace::WorkspaceId;
 use crate::layout::Layout;
+use crate::utils::with_toplevel_role;
 use crate::window::{Mapped, Unmapped};
 
 const VERSION: u32 = 1;
@@ -42,11 +43,15 @@ const AUTO_UPDATE_INTERVAL: Duration = Duration::from_secs(10 * 60); // from_min
 /// Used to globally identify a session.
 pub type SessionId = String;
 
+/// Used to identify an application.
+pub type AppId = String;
+
 /// A reference to a specific toplevel session.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct ToplevelSessionRef {
     pub session_id: SessionId,
     pub toplevel_id: ToplevelId,
+    app_id: Option<AppId>,
 }
 
 /// Session data for all applications.
@@ -465,12 +470,9 @@ pub struct ToplevelSessionState {
 }
 
 impl ToplevelSessionState {
-    fn new(session_id: SessionId, toplevel_id: ToplevelId) -> Self {
+    fn new(session_ref: ToplevelSessionRef) -> Self {
         Self {
-            session_ref: ToplevelSessionRef {
-                session_id,
-                toplevel_id,
-            },
+            session_ref,
             workspace: None,
             attributes: None,
         }
@@ -727,9 +729,15 @@ fn add_toplevel<D>(
         return;
     };
 
+    let app_id = unmapped
+        .window
+        .toplevel()
+        .and_then(|toplevel| with_toplevel_role(toplevel, |role| role.app_id.clone()));
+
     let new_session_ref = ToplevelSessionRef {
         session_id: data.session_id.clone(),
         toplevel_id: toplevel_id.clone(),
+        app_id: app_id.clone(),
     };
     if unmapped
         .session
@@ -770,8 +778,7 @@ fn add_toplevel<D>(
         return;
     };
 
-    let new_toplevel_session_state =
-        ToplevelSessionState::new(data.session_id.clone(), toplevel_id.clone());
+    let new_toplevel_session_state = ToplevelSessionState::new(new_session_ref);
 
     // We may either create a new toplevel session state, or fetch an existing one.
     let toplevel_session_state = if is_restoring {
