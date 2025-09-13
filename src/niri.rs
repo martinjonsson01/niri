@@ -738,6 +738,7 @@ impl State {
             &backend,
             create_wayland_socket,
             is_session_instance,
+            headless,
         );
         backend.init(&mut niri);
 
@@ -2178,6 +2179,7 @@ impl Niri {
         backend: &Backend,
         create_wayland_socket: bool,
         is_session_instance: bool,
+        headless: bool,
     ) -> Self {
         let _span = tracy_client::span!("Niri::new");
 
@@ -2296,6 +2298,7 @@ impl Niri {
             &display_handle,
             client_is_unrestricted,
             &event_loop,
+            !headless,
         );
 
         let is_tty = matches!(backend, Backend::Tty(_));

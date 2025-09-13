@@ -78,7 +78,12 @@ pub struct SessionManagerGlobalData {
 }
 
 impl SessionManagerState {
-    pub fn new<D, F>(display: &DisplayHandle, filter: F, event_loop: &LoopHandle<D>) -> Self
+    pub fn new<D, F>(
+        display: &DisplayHandle,
+        filter: F,
+        event_loop: &LoopHandle<D>,
+        should_load_sessions: bool,
+    ) -> Self
     where
         D: GlobalDispatch<XxSessionManagerV1, SessionManagerGlobalData>,
         D: Dispatch<XxSessionManagerV1, ()>,
@@ -110,7 +115,9 @@ impl SessionManagerState {
             })
             .unwrap();
 
-        let loaded_sessions = Self::load_sessions();
+        let loaded_sessions = should_load_sessions
+            .then(|| Self::load_sessions())
+            .flatten();
 
         Self {
             auto_save_timer: None,
