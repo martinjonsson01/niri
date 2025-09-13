@@ -259,7 +259,7 @@ impl Mapped {
         hook: HookId,
         session: Option<&ToplevelSession>,
     ) -> Self {
-        debug!(
+        trace!(
             "mapped toplevel {:?} with session {:?}",
             window.toplevel().unwrap().xdg_toplevel().id(),
             session.map(ToplevelSession::get_ref)

@@ -534,7 +534,7 @@ impl ToplevelSessionState {
             }
         });
 
-        debug!(
+        trace!(
             "updated top level session state for Mapped {:?} to {:?}",
             mapped.id(),
             &self
