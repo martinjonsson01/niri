@@ -104,8 +104,7 @@
             lib.optional withDbus "dbus"
             ++ lib.optional withDinit "dinit"
             ++ lib.optional withScreencastSupport "xdp-gnome-screencast"
-            ++ lib.optional withSystemd "systemd"
-            ++ lib.optional withSessionManagement "xx-session-management";
+            ++ lib.optional withSystemd "systemd";
           buildNoDefaultFeatures = true;
 
           # ever since this commit:

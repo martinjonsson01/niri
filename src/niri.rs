@@ -148,7 +148,6 @@ use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
 use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManagerState};
 use crate::protocols::virtual_pointer::VirtualPointerManagerState;
-#[cfg(feature = "xx-session-management")]
 use crate::protocols::xx_session_management::SessionManagerState;
 use crate::render_helpers::debug::push_opaque_regions;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
@@ -280,7 +279,6 @@ pub struct Niri {
     pub output_management_state: OutputManagementManagerState,
     pub viewporter_state: ViewporterState,
     pub xdg_foreign_state: XdgForeignState,
-    #[cfg(feature = "xx-session-management")]
     pub session_management_state: SessionManagerState,
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
@@ -2293,7 +2291,6 @@ impl Niri {
         let viewporter_state = ViewporterState::new::<State>(&display_handle);
         let xdg_foreign_state = XdgForeignState::new::<State>(&display_handle);
 
-        #[cfg(feature = "xx-session-management")]
         let session_management_state = SessionManagerState::new::<State, _>(
             &display_handle,
             client_is_unrestricted,
@@ -2483,7 +2480,6 @@ impl Niri {
             screencopy_state,
             viewporter_state,
             xdg_foreign_state,
-            #[cfg(feature = "xx-session-management")]
             session_management_state,
             text_input_state,
             input_method_state,

@@ -129,7 +129,7 @@ xshell = "0.2.7"
 pkg-config = "0.3.32"
 
 [features]
-default = ["dbus", "systemd", "xdp-gnome-screencast", "xx-session-management"]
+default = ["dbus", "systemd", "xdp-gnome-screencast"]
 # Enables D-Bus support (serve various freedesktop and GNOME interfaces, accessibility tree, power button handling).
 dbus = ["dep:zbus", "dep:async-io", "dep:accesskit", "dep:accesskit_unix"]
 # Enables systemd integration (global environment, apps in transient scopes).
@@ -144,8 +144,6 @@ profile-with-tracy-ondemand = ["profile-with-tracy", "tracy-client/ondemand", "t
 profile-with-tracy-allocations = ["profile-with-tracy"]
 # Enables dinit integration (global environment).
 dinit = []
-# Enables experimental support for session management.
-xx-session-management = []
 
 [lints.clippy]
 new_without_default = "allow"

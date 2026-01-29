@@ -24,7 +24,6 @@ pub mod mutter_x11_interop {
     }
 }
 
-#[cfg(feature = "xx-session-management")]
 pub mod xx_session_management {
     pub mod v1 {
         pub use self::generated::server;

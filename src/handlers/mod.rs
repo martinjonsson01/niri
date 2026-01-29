@@ -76,8 +76,6 @@ use smithay::{
 };
 use wayland_backend::server::ClientId;
 
-#[cfg(feature = "xx-session-management")]
-use crate::delegate_session_management;
 pub use crate::handlers::xdg_shell::KdeDecorationsModeState;
 use crate::layout::workspace::WorkspaceId;
 use crate::layout::ActivateWindow;
@@ -95,15 +93,15 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
-use crate::protocols::xx_session_management::{SessionId, ToplevelSessionRef};
-#[cfg(feature = "xx-session-management")]
-use crate::protocols::xx_session_management::{SessionManagementHandler, SessionManagerState};
+use crate::protocols::xx_session_management::{
+    SessionId, SessionManagementHandler, SessionManagerState, ToplevelSessionRef,
+};
 use crate::utils::{output_size, send_scale_transform};
 use crate::window::{Mapped, Unmapped};
 use crate::{
     delegate_ext_workspace, delegate_foreign_toplevel, delegate_gamma_control,
     delegate_mutter_x11_interop, delegate_output_management, delegate_screencopy,
-    delegate_virtual_pointer,
+    delegate_session_management, delegate_virtual_pointer,
 };
 
 pub const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -653,7 +651,6 @@ impl ScreencopyHandler for State {
 }
 delegate_screencopy!(State);
 
-#[cfg(feature = "xx-session-management")]
 impl SessionManagementHandler for State {
     fn session_management_state(&mut self) -> &mut SessionManagerState {
         &mut self.niri.session_management_state
@@ -733,7 +730,6 @@ impl SessionManagementHandler for State {
     }
 }
 
-#[cfg(feature = "xx-session-management")]
 delegate_session_management!(State);
 
 impl VirtualPointerHandler for State {

@@ -9,7 +9,6 @@ mod floating;
 mod fullscreen;
 mod layer_shell;
 mod raw;
-#[cfg(feature = "xx-session-management")]
 mod session;
 mod transactions;
 mod window_opening;
